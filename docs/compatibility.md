@@ -10,7 +10,7 @@ The userscript selects patches from the registry instead of treating every patch
 - an optional capability/bug probe;
 - explicit behavior for unknown versions and unknown probe results.
 
-Selection is evaluated from the authoritative connected-runtime profile plus browser-side capability context captured before any bootstrap patch mutates browser identity. The debug status exposes `bootstrapSelectedPatchIds`, `bootstrapAppliedPatchIds`, and per-patch `patchDecisions` so the decision can be inspected without exposing runtime secrets.
+Selection is evaluated from the authoritative connected-runtime profile plus browser-side capability context captured before any bootstrap patch mutates browser identity. The debug status exposes `bootstrapSelectedPatchIds`, `bootstrapAppliedPatchIds`, runtime-phase patch ids/results, and per-patch decisions so the decision can be inspected without exposing runtime secrets.
 
 Capability probes refine version and environment policy rather than replacing evidence. A known fixed-version boundary always retires a patch before a probe can re-enable it. Conversely, a probe may suppress an unnecessary patch when the affected condition is absent on an otherwise eligible environment.
 
@@ -37,6 +37,34 @@ For page-visible Chromium identity, the current targets use `Linux x86_64` / UA-
 CPU architecture is intentionally not aligned yet. Orca `1.4.188` exposes `host.platform` but no corresponding authoritative `host.arch` RPC, and `status.get` / remote-updater status do not include runtime architecture. Current upstream `main` still exposes `host.platform` without a `host.arch` equivalent. Therefore the patch does not infer `arm64` from `darwin` or otherwise guess the remote CPU. High-entropy UA-CH fields such as `architecture` and `bitness` may remain browser-derived until Orca exposes an authoritative runtime architecture signal.
 
 Additional runtime targets may be added to the generic implementation only when their browser identity can be represented correctly and the corresponding affected browser/runtime combination has evidence. Do not infer support merely because the patch abstraction is generic.
+
+## Web-to-runtime settings bridge
+
+The runtime-phase patch identity is `bridge-web-runtime-settings`. It addresses settings that Orca Web persists in its browser-local settings store but does not forward through `settings.update` even though the paired runtime's published `SettingsUpdate` RPC schema explicitly accepts them.
+
+For Orca `1.4.188`, the bridge forwards these schema-supported fields when the web client changes them:
+
+- `defaultTuiAgent`;
+- `disabledTuiAgents`;
+- `agentDefaultArgs`;
+- `agentDefaultEnv`;
+- `defaultTaskSource`;
+- `visibleTaskProviders`;
+- `defaultTaskViewPreset`;
+- `agentStatusHooksEnabled`;
+- `defaultRepoSelection`;
+- `defaultLinearTeamSelection`;
+- `githubProjects`.
+
+The bridge does not resend fields Orca Web already forwards itself, such as worktree-visibility defaults, compact/new worktree-card settings, MiniMax settings, or PR-bot author overrides. It also does not send arbitrary local-only settings: the allowlist is bounded by the runtime's own strict `SettingsUpdate` schema.
+
+On installation, the bridge performs one bounded reconciliation of only the allowlisted keys that are explicitly present in `orca.web.settings.v1`. It does not synthesize browser defaults and push them to the runtime. This lets an existing explicit web choice such as per-agent launch arguments take effect immediately after the patch is installed without silently overwriting unrelated runtime configuration.
+
+A paired runtime update failure is not converted into a successful web setting write by the wrapper: subsequent bridged setting changes reject rather than silently pretending the runtime accepted them. Standalone/unpaired Web keeps its normal browser-local behavior.
+
+Confirmed affected version: Orca `1.4.188`. The same omission was still present in the inspected upstream Web settings forwarding source at commit `4218d5068e252fc4d6db4b146b92716f1b015039`; first fixed release is not yet known.
+
+This bridge covers settings that already have an authoritative runtime RPC contract. It deliberately does not invent transport for settings that the runtime schema does not accept, nor does it rewrite unrelated action RPCs merely to emulate internal renderer state.
 
 ## Evidence vs application policy
 
