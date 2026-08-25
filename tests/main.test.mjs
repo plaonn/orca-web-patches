@@ -72,8 +72,9 @@ test('fresh verified Linux profile automatically selects and applies the generic
   assert.equal(status.bootstrapPatchResults[0].reason, 'aligned');
   assert.equal(status.patchDecisions[0].selected, true);
   assert.deepEqual(status.runtimeSelectedPatchIds, ['bridge-web-runtime-settings']);
-  assert.deepEqual(status.runtimeAppliedPatchIds, []);
-  assert.equal(status.runtimePatchResults[0].reason, 'settings-api-unavailable');
+  assert.deepEqual(status.runtimeAppliedPatchIds, ['bridge-web-runtime-settings']);
+  assert.equal(status.runtimePatchResults[0].reason, 'storage-observer-installed');
+  assert.equal(status.runtimeSettingsBridge.storageObserverInstalled, true);
 });
 
 test('fresh verified macOS profile automatically selects and applies the generic alignment patch', async () => {
