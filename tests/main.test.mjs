@@ -9,12 +9,14 @@ const modules = [
   'src/constants.js', 'src/version.js', 'src/runtime-profile.js', 'src/patch-registry.js',
   'src/patches/align-browser-platform-to-runtime.js', 'src/patches/bridge-web-runtime-settings.js',
   'src/patches/qualify-runtime-worktree-removal-host.js',
+  'src/patches/fill-web-project-groups-api.js',
   'src/runtime-discovery.js', 'src/main.js'
 ];
 
 const expectedRuntimePatchIds = [
   'bridge-web-runtime-settings',
-  'qualify-runtime-worktree-removal-host'
+  'qualify-runtime-worktree-removal-host',
+  'fill-web-project-groups-api'
 ];
 
 function loadApp({ profile, discovered, browserPlatform = 'Win32' }) {
@@ -49,9 +51,7 @@ function loadApp({ profile, discovered, browserPlatform = 'Win32' }) {
     location: { search: '', reload: () => { reloads += 1; } },
     console,
     api: {
-      settings: {
-        set: async (updates) => updates
-      },
+      settings: { set: async (updates) => updates },
       runtimeEnvironments: {
         call: async (request) => {
           runtimeCalls.push(request);
@@ -78,6 +78,7 @@ function assertRuntimePatchesInstalled(status) {
   assert.deepEqual(JSON.parse(JSON.stringify(status.runtimeAppliedPatchIds)), expectedRuntimePatchIds);
   assert.equal(status.runtimeSettingsBridge.storageObserverInstalled, true);
   assert.equal(status.worktreeRemovalHostQualification.installed, true);
+  assert.equal(status.webProjectGroupsAdapter.installed, true);
 }
 
 test('fresh verified Linux profile automatically selects and applies the generic alignment patch', async () => {
