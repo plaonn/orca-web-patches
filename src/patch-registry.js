@@ -21,6 +21,26 @@
     })
   });
 
+  const runtimePatch = (id, rationale, evidence) => Object.freeze({
+    id,
+    phase: 'runtime',
+    appliesTo: Object.freeze({
+      runtimePlatforms: Object.freeze([]),
+      browserPlatforms: Object.freeze([]),
+      versionRange: null,
+      probe: null
+    }),
+    unknownVersionBehavior: 'skip',
+    unknownProbeBehavior: 'skip',
+    applyUntilFixed: true,
+    evidence: Object.freeze({
+      confirmedAffected: Object.freeze(['1.4.188']),
+      fixedIn: null,
+      ...evidence
+    }),
+    rationale
+  });
+
   const PATCHES = Object.freeze([
     Object.freeze({
       id: 'align-browser-platform-to-runtime',
@@ -45,50 +65,36 @@
       }),
       rationale: 'Align page-visible browser platform identity with the authoritative connected runtime when a verified affected browser/runtime combination requires it.'
     }),
-    Object.freeze({
-      id: 'bridge-web-runtime-settings',
-      phase: 'runtime',
-      appliesTo: Object.freeze({
-        runtimePlatforms: Object.freeze([]),
-        browserPlatforms: Object.freeze([]),
-        versionRange: null,
-        probe: null
-      }),
-      unknownVersionBehavior: 'skip',
-      unknownProbeBehavior: 'skip',
-      applyUntilFixed: true,
-      evidence: Object.freeze({
-        confirmedAffected: Object.freeze(['1.4.188']),
+    runtimePatch(
+      'bridge-web-runtime-settings',
+      'Forward runtime-supported settings that Orca Web persists locally but omits from settings.update when paired to a runtime.',
+      {
         confirmedAffectedContexts: Object.freeze([
           Object.freeze({ client: 'web', runtime: 'paired' })
         ]),
-        upstreamSourceObservedAt: '4218d5068e252fc4d6db4b146b92716f1b015039',
-        fixedIn: null
-      }),
-      rationale: 'Forward runtime-supported settings that Orca Web persists locally but omits from settings.update when paired to a runtime.'
-    }),
-    Object.freeze({
-      id: 'qualify-runtime-worktree-removal-host',
-      phase: 'runtime',
-      appliesTo: Object.freeze({
-        runtimePlatforms: Object.freeze([]),
-        browserPlatforms: Object.freeze([]),
-        versionRange: null,
-        probe: null
-      }),
-      unknownVersionBehavior: 'skip',
-      unknownProbeBehavior: 'skip',
-      applyUntilFixed: true,
-      evidence: Object.freeze({
-        confirmedAffected: Object.freeze(['1.4.188']),
+        upstreamSourceObservedAt: '4218d5068e252fc4d6db4b146b92716f1b015039'
+      }
+    ),
+    runtimePatch(
+      'qualify-runtime-worktree-removal-host',
+      'Backport upstream paired-runtime worktree removal host qualification so a runtime-local host id is not sent back to the same runtime as a foreign host selector.',
+      {
         confirmedAffectedContexts: Object.freeze([
           Object.freeze({ client: 'web', runtime: 'paired', operation: 'worktree.rm' })
         ]),
-        upstreamSourceObservedAt: '32df073e445ccc4e294be6cc71668f5aaa00ceec',
-        fixedIn: null
-      }),
-      rationale: 'Backport upstream paired-runtime worktree removal host qualification so a runtime-local host id is not sent back to the same runtime as a foreign host selector.'
-    })
+        upstreamSourceObservedAt: '32df073e445ccc4e294be6cc71668f5aaa00ceec'
+      }
+    ),
+    runtimePatch(
+      'fill-web-project-groups-api',
+      'Backfill the ProjectGroups preload namespace that paired Orca Web omits, routing supported group mutations to the paired runtime RPC surface.',
+      {
+        confirmedAffectedContexts: Object.freeze([
+          Object.freeze({ client: 'web', runtime: 'paired', surface: 'api.projectGroups' })
+        ]),
+        upstreamSourceObservedAt: '61c7b51c8cc9e992dbdebc037562c208f84ac8cd'
+      }
+    )
   ]);
 
   function getPatch(id) {
