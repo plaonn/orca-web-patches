@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Orca Web Patches
 // @namespace    https://github.com/plaonn/orca-web-patches
-// @version      0.2.3
+// @version      0.2.4
 // @description  Version-aware compatibility patches for Orca Web.
 // @license      MIT
 // @homepageURL  https://github.com/plaonn/orca-web-patches
@@ -27,7 +27,7 @@
     'use strict';
   
     OWP.constants = Object.freeze({
-      SCRIPT_VERSION: '0.2.3',
+      SCRIPT_VERSION: '0.2.4',
       ORCA_ENVIRONMENT_STORAGE_KEY: 'orca.web.runtimeEnvironment.v1',
       WEB_SETTINGS_STORAGE_KEY: 'orca.web.settings.v1',
       PROFILE_STORAGE_KEY: 'orca.web.patches.runtimeProfile.v1',
@@ -242,6 +242,26 @@
       })
     });
   
+    const runtimePatch = (id, rationale, evidence) => Object.freeze({
+      id,
+      phase: 'runtime',
+      appliesTo: Object.freeze({
+        runtimePlatforms: Object.freeze([]),
+        browserPlatforms: Object.freeze([]),
+        versionRange: null,
+        probe: null
+      }),
+      unknownVersionBehavior: 'skip',
+      unknownProbeBehavior: 'skip',
+      applyUntilFixed: true,
+      evidence: Object.freeze({
+        confirmedAffected: Object.freeze(['1.4.188']),
+        fixedIn: null,
+        ...evidence
+      }),
+      rationale
+    });
+  
     const PATCHES = Object.freeze([
       Object.freeze({
         id: 'align-browser-platform-to-runtime',
@@ -266,50 +286,36 @@
         }),
         rationale: 'Align page-visible browser platform identity with the authoritative connected runtime when a verified affected browser/runtime combination requires it.'
       }),
-      Object.freeze({
-        id: 'bridge-web-runtime-settings',
-        phase: 'runtime',
-        appliesTo: Object.freeze({
-          runtimePlatforms: Object.freeze([]),
-          browserPlatforms: Object.freeze([]),
-          versionRange: null,
-          probe: null
-        }),
-        unknownVersionBehavior: 'skip',
-        unknownProbeBehavior: 'skip',
-        applyUntilFixed: true,
-        evidence: Object.freeze({
-          confirmedAffected: Object.freeze(['1.4.188']),
+      runtimePatch(
+        'bridge-web-runtime-settings',
+        'Forward runtime-supported settings that Orca Web persists locally but omits from settings.update when paired to a runtime.',
+        {
           confirmedAffectedContexts: Object.freeze([
             Object.freeze({ client: 'web', runtime: 'paired' })
           ]),
-          upstreamSourceObservedAt: '4218d5068e252fc4d6db4b146b92716f1b015039',
-          fixedIn: null
-        }),
-        rationale: 'Forward runtime-supported settings that Orca Web persists locally but omits from settings.update when paired to a runtime.'
-      }),
-      Object.freeze({
-        id: 'qualify-runtime-worktree-removal-host',
-        phase: 'runtime',
-        appliesTo: Object.freeze({
-          runtimePlatforms: Object.freeze([]),
-          browserPlatforms: Object.freeze([]),
-          versionRange: null,
-          probe: null
-        }),
-        unknownVersionBehavior: 'skip',
-        unknownProbeBehavior: 'skip',
-        applyUntilFixed: true,
-        evidence: Object.freeze({
-          confirmedAffected: Object.freeze(['1.4.188']),
+          upstreamSourceObservedAt: '4218d5068e252fc4d6db4b146b92716f1b015039'
+        }
+      ),
+      runtimePatch(
+        'qualify-runtime-worktree-removal-host',
+        'Backport upstream paired-runtime worktree removal host qualification so a runtime-local host id is not sent back to the same runtime as a foreign host selector.',
+        {
           confirmedAffectedContexts: Object.freeze([
             Object.freeze({ client: 'web', runtime: 'paired', operation: 'worktree.rm' })
           ]),
-          upstreamSourceObservedAt: '32df073e445ccc4e294be6cc71668f5aaa00ceec',
-          fixedIn: null
-        }),
-        rationale: 'Backport upstream paired-runtime worktree removal host qualification so a runtime-local host id is not sent back to the same runtime as a foreign host selector.'
-      })
+          upstreamSourceObservedAt: '32df073e445ccc4e294be6cc71668f5aaa00ceec'
+        }
+      ),
+      runtimePatch(
+        'fill-web-project-groups-api',
+        'Backfill the ProjectGroups preload namespace that paired Orca Web omits, routing supported group mutations to the paired runtime RPC surface.',
+        {
+          confirmedAffectedContexts: Object.freeze([
+            Object.freeze({ client: 'web', runtime: 'paired', surface: 'api.projectGroups' })
+          ]),
+          upstreamSourceObservedAt: '61c7b51c8cc9e992dbdebc037562c208f84ac8cd'
+        }
+      )
     ]);
   
     function getPatch(id) {
@@ -1155,6 +1161,189 @@
   })(OWP);
   
 
+  // ---- src/patches/fill-web-project-groups-api.js ----
+  ((OWP) => {
+    'use strict';
+  
+    const ADAPTER_MARKER = '__orcaWebPatchesProjectGroupsAdapterV1';
+    const WATCH_INTERVAL_MS = 250;
+  
+    const patchState = {
+      installed: false,
+      watcherInstalled: false,
+      adapterInstallCount: 0,
+      observedCallCount: 0,
+      lastMethod: null,
+      lastStatus: 'idle',
+      lastError: null
+    };
+  
+    let watcherHandle = null;
+  
+    function activeEnvironmentSelector(windowObject) {
+      try {
+        return OWP.runtimeProfile.readCurrentEnvironment(windowObject.localStorage)?.environmentId ?? null;
+      } catch {
+        return null;
+      }
+    }
+  
+    function runtimeErrorMessage(response, method) {
+      if (!response || response.ok !== false) return null;
+      if (typeof response.error?.message === 'string' && response.error.message) {
+        return response.error.message;
+      }
+      if (typeof response.error === 'string' && response.error) return response.error;
+      return `${method} failed`;
+    }
+  
+    async function callRuntime(windowObject, method, params) {
+      const selector = activeEnvironmentSelector(windowObject);
+      if (!selector) throw new Error('No paired Orca runtime environment is active');
+      const runtimeEnvironments = windowObject.api?.runtimeEnvironments;
+      if (typeof runtimeEnvironments?.call !== 'function') {
+        throw new Error('Orca runtime environment API is unavailable');
+      }
+  
+      patchState.observedCallCount += 1;
+      patchState.lastMethod = method;
+      patchState.lastStatus = 'pending';
+      patchState.lastError = null;
+  
+      try {
+        const request = { selector, method };
+        if (params !== undefined) request.params = params;
+        const response = await runtimeEnvironments.call(request);
+        const message = runtimeErrorMessage(response, method);
+        if (message) throw new Error(message);
+        patchState.lastStatus = 'success';
+        return response?.result;
+      } catch (error) {
+        patchState.lastStatus = 'error';
+        patchState.lastError = error instanceof Error ? error.message : String(error);
+        throw error;
+      }
+    }
+  
+    function createAdapter(windowObject) {
+      const adapter = {
+        list: async () => {
+          const result = await callRuntime(windowObject, 'projectGroup.list');
+          return Array.isArray(result?.groups) ? result.groups : [];
+        },
+        create: async (args) => {
+          const result = await callRuntime(windowObject, 'projectGroup.create', args ?? {});
+          if (!result?.group || typeof result.group !== 'object') {
+            throw new Error('projectGroup.create returned no group');
+          }
+          return result.group;
+        },
+        update: async ({ groupId, updates }) => {
+          const result = await callRuntime(windowObject, 'projectGroup.update', { groupId, updates });
+          return result?.group ?? null;
+        },
+        delete: async ({ groupId }) => {
+          const result = await callRuntime(windowObject, 'projectGroup.delete', { groupId });
+          return result?.deleted === true || result === true;
+        },
+        moveProject: async ({ projectId, groupId, order }) => {
+          const params = { repo: projectId, groupId: groupId ?? null };
+          if (order !== undefined) params.order = order;
+          const result = await callRuntime(windowObject, 'projectGroup.moveProject', params);
+          return result?.repo ?? null;
+        },
+        // Preserve the old Web fallback behavior for operations this patch does not backfill.
+        scanNested: async () => undefined,
+        cancelNestedScan: async () => undefined,
+        onNestedScanProgress: () => () => {},
+        importNested: async () => undefined
+      };
+      Object.defineProperty(adapter, ADAPTER_MARKER, { value: true });
+      return adapter;
+    }
+  
+    function installAdapter(windowObject) {
+      const api = windowObject.api;
+      if (!api || typeof api !== 'object') {
+        return { applied: false, reason: 'preload-api-unavailable' };
+      }
+      if (api.projectGroups?.[ADAPTER_MARKER] === true) {
+        patchState.installed = true;
+        return { applied: true, reason: 'already-installed' };
+      }
+  
+      const adapter = createAdapter(windowObject);
+      try {
+        api.projectGroups = adapter;
+      } catch {
+        // Fall through to defineProperty for stricter proxy/object surfaces.
+      }
+      if (api.projectGroups?.[ADAPTER_MARKER] !== true) {
+        try {
+          Object.defineProperty(api, 'projectGroups', {
+            value: adapter,
+            configurable: true,
+            writable: true
+          });
+        } catch {
+          return { applied: false, reason: 'project-groups-api-not-writable' };
+        }
+      }
+  
+      patchState.installed = true;
+      patchState.adapterInstallCount += 1;
+      return {
+        applied: true,
+        fields: ['api.projectGroups'],
+        reason: 'adapter-installed'
+      };
+    }
+  
+    function installWatcher(windowObject) {
+      if (watcherHandle !== null) {
+        patchState.watcherInstalled = true;
+        return { applied: true, reason: 'watcher-already-installed' };
+      }
+      if (typeof windowObject.setInterval !== 'function') {
+        return { applied: false, reason: 'setinterval-unavailable' };
+      }
+      watcherHandle = windowObject.setInterval(() => {
+        try {
+          installAdapter(windowObject);
+        } catch (error) {
+          patchState.lastError = error instanceof Error ? error.message : String(error);
+        }
+      }, WATCH_INTERVAL_MS);
+      patchState.watcherInstalled = true;
+      return { applied: true, reason: 'watcher-installed' };
+    }
+  
+    function applyFillWebProjectGroupsApi(windowObject) {
+      const adapter = installAdapter(windowObject);
+      const watcher = installWatcher(windowObject);
+      const applied = adapter.applied;
+      return {
+        applied,
+        fields: [
+          ...(adapter.applied ? ['api.projectGroups'] : []),
+          ...(watcher.applied ? ['project-groups-api-rewrap-watcher'] : [])
+        ],
+        reason: applied ? adapter.reason : `${adapter.reason};${watcher.reason}`
+      };
+    }
+  
+    OWP.fillWebProjectGroupsApi = Object.freeze({
+      activeEnvironmentSelector,
+      callRuntime,
+      createAdapter,
+      installAdapter,
+      installWatcher,
+      applyFillWebProjectGroupsApi,
+      getStatus: () => ({ ...patchState })
+    });
+  })(OWP);
+  
+
   // ---- src/runtime-discovery.js ----
   ((OWP) => {
     'use strict';
@@ -1530,6 +1719,9 @@
       if (patch.id === 'qualify-runtime-worktree-removal-host') {
         return OWP.qualifyRuntimeWorktreeRemovalHost.applyQualifyRuntimeWorktreeRemovalHost(windowObject);
       }
+      if (patch.id === 'fill-web-project-groups-api') {
+        return OWP.fillWebProjectGroupsApi.applyFillWebProjectGroupsApi(windowObject);
+      }
       return { applied: false, fields: [], reason: 'patch-implementation-unavailable' };
     }
   
@@ -1602,6 +1794,9 @@
           }
           if (OWP.qualifyRuntimeWorktreeRemovalHost?.getStatus) {
             snapshot.worktreeRemovalHostQualification = OWP.qualifyRuntimeWorktreeRemovalHost.getStatus();
+          }
+          if (OWP.fillWebProjectGroupsApi?.getStatus) {
+            snapshot.webProjectGroupsAdapter = OWP.fillWebProjectGroupsApi.getStatus();
           }
           return snapshot;
         },
