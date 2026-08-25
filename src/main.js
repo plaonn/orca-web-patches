@@ -5,12 +5,18 @@
     scriptVersion: OWP.constants.SCRIPT_VERSION,
     environmentFound: false,
     bootstrapProfile: null,
+    bootstrapSelectedPatchIds: [],
+    bootstrapAppliedPatchIds: [],
     bootstrapPatchApplied: false,
     bootstrapPatchFields: [],
+    bootstrapPatchResults: [],
+    patchDecisions: [],
     discoveryStatus: 'idle',
     lastDiscovery: null,
     reloadRequested: false
   };
+
+  let selectionContext = null;
 
   function summarizeProfile(profile) {
     return profile ? {
@@ -42,11 +48,56 @@
     if (isDebugEnabled(windowObject)) windowObject.console?.debug?.('[Orca Web Patches]', ...args);
   }
 
-  function wantsLinuxPatch(profile) {
-    return OWP.patchRegistry.shouldApplyPatch(
-      OWP.patchRegistry.getPatch('force-linux-platform'),
-      profile
-    );
+  function createSelectionContext(windowObject) {
+    return Object.freeze({
+      browserPlatform: typeof windowObject?.navigator?.platform === 'string'
+        ? windowObject.navigator.platform
+        : null
+    });
+  }
+
+  function selectBootstrapPatches(profile) {
+    return OWP.patchRegistry.selectPatches(profile, selectionContext ?? {}, { phase: 'bootstrap' });
+  }
+
+  function patchIds(selection) {
+    return selection.selected.map((patch) => patch.id);
+  }
+
+  function samePatchIds(left, right) {
+    if (left.length !== right.length) return false;
+    return left.every((id, index) => id === right[index]);
+  }
+
+  function applyPatch(windowObject, patch) {
+    if (patch.id === 'force-linux-platform') {
+      return OWP.forceLinuxPlatform.applyForceLinuxPlatform(windowObject.navigator);
+    }
+    return { applied: false, fields: [] };
+  }
+
+  function applyBootstrapPatches(windowObject, selection) {
+    const appliedPatchIds = [];
+    const fields = [];
+    const results = [];
+
+    for (const patch of selection.selected) {
+      const result = applyPatch(windowObject, patch);
+      if (result?.applied) appliedPatchIds.push(patch.id);
+      for (const field of result?.fields ?? []) fields.push(field);
+      results.push({
+        patchId: patch.id,
+        applied: result?.applied === true,
+        fields: [...(result?.fields ?? [])]
+      });
+    }
+
+    state.bootstrapSelectedPatchIds = patchIds(selection);
+    state.bootstrapAppliedPatchIds = appliedPatchIds;
+    state.bootstrapPatchApplied = appliedPatchIds.length > 0;
+    state.bootstrapPatchFields = fields;
+    state.bootstrapPatchResults = results;
+    state.patchDecisions = selection.decisions;
   }
 
   function requestBoundedReload(windowObject, reason) {
@@ -124,14 +175,17 @@
     }
 
     state.discoveryStatus = 'success';
-    const desiredLinuxPatch = wantsLinuxPatch(profile);
-    if (desiredLinuxPatch !== state.bootstrapPatchApplied) {
+    const desiredSelection = selectBootstrapPatches(profile);
+    const desiredPatchIds = patchIds(desiredSelection);
+    state.patchDecisions = desiredSelection.decisions;
+
+    if (!samePatchIds(desiredPatchIds, state.bootstrapSelectedPatchIds)) {
       const reason = [
         environment.environmentId,
         profile.runtimeId,
         profile.platform,
         profile.appVersion ?? 'unknown',
-        desiredLinuxPatch ? 'linux-on' : 'linux-off'
+        desiredPatchIds.length > 0 ? desiredPatchIds.join(',') : 'no-patches'
       ].join('|');
       requestBoundedReload(windowObject, reason);
       return state.lastDiscovery;
@@ -143,6 +197,8 @@
 
   function start(windowObject = globalThis.window) {
     if (!windowObject?.localStorage) return state;
+    selectionContext = createSelectionContext(windowObject);
+
     const environment = OWP.runtimeProfile.readCurrentEnvironment(windowObject.localStorage);
     if (!environment) {
       installDebugApi(windowObject);
@@ -155,11 +211,11 @@
       environment
     );
     state.bootstrapProfile = summarizeProfile(profile);
-    if (profile && wantsLinuxPatch(profile)) {
-      const result = OWP.forceLinuxPlatform.applyForceLinuxPlatform(windowObject.navigator);
-      state.bootstrapPatchApplied = result.applied;
-      state.bootstrapPatchFields = result.fields;
-      debug(windowObject, 'bootstrap Linux platform patch:', result);
+
+    const bootstrapSelection = selectBootstrapPatches(profile);
+    applyBootstrapPatches(windowObject, bootstrapSelection);
+    if (bootstrapSelection.selected.length > 0) {
+      debug(windowObject, 'bootstrap patch selection:', state.patchDecisions);
     }
 
     installDebugApi(windowObject);
@@ -167,6 +223,12 @@
     return state;
   }
 
-  OWP.main = Object.freeze({ start, revalidate: runRevalidation, wantsLinuxPatch, requestBoundedReload });
+  OWP.main = Object.freeze({
+    start,
+    revalidate: runRevalidation,
+    createSelectionContext,
+    selectBootstrapPatches,
+    requestBoundedReload
+  });
   start();
 })(globalThis.__OWP__);
