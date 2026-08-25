@@ -9,10 +9,11 @@ test('build emits deterministic userscript metadata and contains no user-specifi
   execFileSync(process.execPath, ['scripts/build.mjs'], { cwd: root, stdio: 'pipe' });
   const artifactPath = path.join(root, 'dist/orca-web-patches.user.js');
   const artifact = fs.readFileSync(artifactPath, 'utf8');
+  const packageVersion = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
   const first = artifact;
   execFileSync(process.execPath, ['scripts/build.mjs'], { cwd: root, stdio: 'pipe' });
   assert.equal(fs.readFileSync(artifactPath, 'utf8'), first);
-  assert.match(artifact, /@version\s+0\.2\.3/);
+  assert.match(artifact, new RegExp(`@version\\s+${packageVersion.replace(/\\./g, '\\\\.')}`));
   assert.match(artifact, /@license\s+MIT/);
   assert.match(artifact, /@run-at\s+document-start/);
   assert.match(artifact, /@sandbox\s+raw/);
