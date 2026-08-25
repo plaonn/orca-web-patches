@@ -9,7 +9,7 @@
     const startedAt = Date.now();
     while (Date.now() - startedAt <= timeoutMs) {
       const api = windowObject?.api?.runtimeEnvironments;
-      if (api?.list && api?.getStatus && api?.call) return api;
+      if (api?.getStatus && api?.call) return api;
       await sleep(windowObject, OWP.constants.API_POLL_INTERVAL_MS);
     }
     return null;
@@ -21,38 +21,36 @@
   }
 
   async function discoverRuntime(windowObject, expectedEnvironment) {
-    const api = await waitForRuntimeApi(windowObject);
-    if (!api) return { ok: false, reason: 'runtime-api-unavailable' };
-
-    let environments;
-    try {
-      environments = await api.list();
-    } catch {
-      return { ok: false, reason: 'runtime-environment-list-failed' };
+    const selector = expectedEnvironment?.environmentId;
+    if (typeof selector !== 'string' || !selector) {
+      return { ok: false, reason: 'runtime-environment-invalid', stage: 'environment' };
     }
-    const environment = Array.isArray(environments)
-      ? environments.find((entry) => entry?.id === expectedEnvironment?.environmentId)
-      : null;
-    if (!environment) return { ok: false, reason: 'runtime-environment-mismatch' };
 
+    const api = await waitForRuntimeApi(windowObject);
+    if (!api) return { ok: false, reason: 'runtime-api-unavailable', stage: 'api' };
+
+    // The persisted environment identity is already the authority for which paired
+    // runtime to query. Avoid runtimeEnvironments.list(): in paired browser clients
+    // that public listing is unnecessary for identity verification and may cross a
+    // userscript/page-world async boundary that never settles.
     let statusEnvelope;
     try {
       statusEnvelope = await api.getStatus({
-        selector: environment.id,
+        selector,
         timeoutMs: OWP.constants.RUNTIME_CALL_TIMEOUT_MS
       });
     } catch {
-      return { ok: false, reason: 'runtime-status-failed' };
+      return { ok: false, reason: 'runtime-status-failed', stage: 'status' };
     }
     const status = unwrapEnvelope(statusEnvelope);
-    if (!status) return { ok: false, reason: 'runtime-status-rejected' };
+    if (!status) return { ok: false, reason: 'runtime-status-rejected', stage: 'status' };
 
     const runtimeId = typeof status.runtimeId === 'string' && status.runtimeId
       ? status.runtimeId
       : typeof statusEnvelope?._meta?.runtimeId === 'string'
         ? statusEnvelope._meta.runtimeId
         : null;
-    if (!runtimeId) return { ok: false, reason: 'runtime-id-missing' };
+    if (!runtimeId) return { ok: false, reason: 'runtime-id-missing', stage: 'status' };
 
     let platform = OWP.runtimeProfile.isValidPlatform(status.hostPlatform)
       ? status.hostPlatform
@@ -61,18 +59,18 @@
       let platformEnvelope;
       try {
         platformEnvelope = await api.call({
-          selector: environment.id,
+          selector,
           method: 'host.platform',
           timeoutMs: OWP.constants.RUNTIME_CALL_TIMEOUT_MS
         });
       } catch {
-        return { ok: false, reason: 'host-platform-call-failed' };
+        return { ok: false, reason: 'host-platform-call-failed', stage: 'platform' };
       }
       const platformResult = unwrapEnvelope(platformEnvelope);
       platform = platformResult?.platform;
     }
     if (!OWP.runtimeProfile.isValidPlatform(platform)) {
-      return { ok: false, reason: 'host-platform-invalid' };
+      return { ok: false, reason: 'host-platform-invalid', stage: 'platform' };
     }
 
     const appVersion = typeof status.appVersion === 'string' && status.appVersion.trim()

@@ -7,9 +7,11 @@
     bootstrapProfile: null,
     bootstrapPatchApplied: false,
     bootstrapPatchFields: [],
+    discoveryStatus: 'idle',
     lastDiscovery: null,
     reloadRequested: false
   };
+  let activeRevalidation = null;
 
   function summarizeProfile(profile) {
     return profile ? {
@@ -81,15 +83,29 @@
     }
   }
 
-  async function revalidate(windowObject) {
+  async function runRevalidation(windowObject) {
     const environment = OWP.runtimeProfile.readCurrentEnvironment(windowObject.localStorage);
     if (!environment) {
-      state.lastDiscovery = { ok: false, reason: 'orca-environment-not-found' };
+      state.discoveryStatus = 'error';
+      state.lastDiscovery = { ok: false, reason: 'orca-environment-not-found', stage: 'environment' };
       return state.lastDiscovery;
     }
-    const discovered = await OWP.runtimeDiscovery.discoverRuntime(windowObject, environment);
+
+    state.discoveryStatus = 'pending';
+    state.lastDiscovery = { ok: false, reason: 'runtime-discovery-pending', stage: 'discovery' };
+
+    let discovered;
+    try {
+      discovered = await OWP.runtimeDiscovery.discoverRuntime(windowObject, environment);
+    } catch {
+      state.discoveryStatus = 'error';
+      state.lastDiscovery = { ok: false, reason: 'runtime-discovery-threw', stage: 'discovery' };
+      return state.lastDiscovery;
+    }
+
     state.lastDiscovery = summarizeDiscovery(discovered);
     if (!discovered.ok) {
+      state.discoveryStatus = 'error';
       debug(windowObject, 'runtime revalidation skipped:', discovered.reason);
       return state.lastDiscovery;
     }
@@ -102,9 +118,12 @@
         discovered
       );
     } catch {
-      state.lastDiscovery = { ok: false, reason: 'runtime-profile-cache-write-failed' };
+      state.discoveryStatus = 'error';
+      state.lastDiscovery = { ok: false, reason: 'runtime-profile-cache-write-failed', stage: 'cache' };
       return state.lastDiscovery;
     }
+
+    state.discoveryStatus = 'success';
     const desiredLinuxPatch = wantsLinuxPatch(profile);
     if (desiredLinuxPatch !== state.bootstrapPatchApplied) {
       const reason = [
@@ -120,6 +139,14 @@
 
     clearReloadGuard(windowObject);
     return state.lastDiscovery;
+  }
+
+  function revalidate(windowObject) {
+    if (activeRevalidation) return activeRevalidation;
+    activeRevalidation = runRevalidation(windowObject).finally(() => {
+      activeRevalidation = null;
+    });
+    return activeRevalidation;
   }
 
   function start(windowObject = globalThis.window) {
