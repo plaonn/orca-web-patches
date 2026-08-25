@@ -14,10 +14,16 @@ The patch adjusts `navigator.platform`, the OS portion of `navigator.userAgent` 
 
 ## Install
 
+Canonical stable install/update URL:
+
+https://raw.githubusercontent.com/plaonn/orca-web-patches/main/dist/orca-web-patches.user.js
+
+Install this URL in Tampermonkey. The userscript's `@updateURL` and `@downloadURL` point back to the same `main` artifact, so future stable releases continue updating through this fixed URL.
+
 1. Install Tampermonkey in Edge/Chromium.
 2. Allow userscripts. On Edge, `edge://extensions` → Developer mode satisfies the current Chromium userscript permission requirement.
 3. In Tampermonkey settings, `Content Script API = UserScripts API Dynamic` is recommended. This provides genuine `document-start` execution needed by bootstrap patches.
-4. Install `dist/orca-web-patches.user.js`. Opening its raw GitHub URL installs it and Tampermonkey can update it from the `@updateURL` / `@downloadURL` metadata.
+4. Open the canonical stable URL above and install the userscript.
 5. Configure the actual Orca Web URL/port scope locally in Tampermonkey as described below.
 
 ## Local URL/port configuration
