@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadModules } from './helpers.mjs';
 
-const OWP = loadModules(['src/patches/force-linux-platform.js']);
+const OWP = loadModules(['src/patches/align-browser-platform-to-runtime.js']);
 
 function makeNavigator() {
   class FakeNavigator {}
@@ -14,17 +14,20 @@ function makeNavigator() {
     userAgentData: {
       platform: 'Windows',
       brands: [{ brand: 'Microsoft Edge', version: '151' }],
-      async getHighEntropyValues() { return { platform: 'Windows', platformVersion: '19.0.0', architecture: 'x86' }; },
+      async getHighEntropyValues() {
+        return { platform: 'Windows', platformVersion: '19.0.0', architecture: 'x86' };
+      },
       toJSON() { return { platform: 'Windows', brands: this.brands }; }
     }
   });
   return navigator;
 }
 
-test('Linux spoof preserves Edge browser identity while replacing OS identity', async () => {
+test('aligns an affected Windows browser identity to a verified Linux runtime', async () => {
   const navigator = makeNavigator();
-  const result = OWP.forceLinuxPlatform.applyForceLinuxPlatform(navigator);
+  const result = OWP.alignBrowserPlatformToRuntime.applyAlignBrowserPlatformToRuntime(navigator, 'linux');
   assert.equal(result.applied, true);
+  assert.equal(result.reason, 'aligned');
   assert.equal(navigator.platform, 'Linux x86_64');
   assert.match(navigator.userAgent, /\(X11; Linux x86_64\)/);
   assert.match(navigator.userAgent, /Edg\/151\.0\.0\.0/);
@@ -33,4 +36,13 @@ test('Linux spoof preserves Edge browser identity while replacing OS identity', 
   assert.equal((await navigator.userAgentData.getHighEntropyValues(['platform', 'platformVersion'])).platform, 'Linux');
   assert.equal((await navigator.userAgentData.getHighEntropyValues(['platform', 'platformVersion'])).platformVersion, '0.0.0');
   assert.equal(navigator.userAgentData.toJSON().platform, 'Linux');
+});
+
+test('unsupported runtime identities fail closed instead of inventing a browser identity', () => {
+  const navigator = makeNavigator();
+  const result = OWP.alignBrowserPlatformToRuntime.applyAlignBrowserPlatformToRuntime(navigator, 'darwin');
+  assert.equal(result.applied, false);
+  assert.equal(result.reason, 'unsupported-runtime-platform');
+  assert.equal(navigator.platform, 'Win32');
+  assert.match(navigator.userAgent, /Windows NT/);
 });

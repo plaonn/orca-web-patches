@@ -69,26 +69,30 @@
     return left.every((id, index) => id === right[index]);
   }
 
-  function applyPatch(windowObject, patch) {
-    if (patch.id === 'force-linux-platform') {
-      return OWP.forceLinuxPlatform.applyForceLinuxPlatform(windowObject.navigator);
+  function applyPatch(windowObject, patch, profile) {
+    if (patch.id === 'align-browser-platform-to-runtime') {
+      return OWP.alignBrowserPlatformToRuntime.applyAlignBrowserPlatformToRuntime(
+        windowObject.navigator,
+        profile?.platform
+      );
     }
-    return { applied: false, fields: [] };
+    return { applied: false, fields: [], reason: 'patch-implementation-unavailable' };
   }
 
-  function applyBootstrapPatches(windowObject, selection) {
+  function applyBootstrapPatches(windowObject, selection, profile) {
     const appliedPatchIds = [];
     const fields = [];
     const results = [];
 
     for (const patch of selection.selected) {
-      const result = applyPatch(windowObject, patch);
+      const result = applyPatch(windowObject, patch, profile);
       if (result?.applied) appliedPatchIds.push(patch.id);
       for (const field of result?.fields ?? []) fields.push(field);
       results.push({
         patchId: patch.id,
         applied: result?.applied === true,
-        fields: [...(result?.fields ?? [])]
+        fields: [...(result?.fields ?? [])],
+        reason: result?.reason ?? null
       });
     }
 
@@ -213,7 +217,7 @@
     state.bootstrapProfile = summarizeProfile(profile);
 
     const bootstrapSelection = selectBootstrapPatches(profile);
-    applyBootstrapPatches(windowObject, bootstrapSelection);
+    applyBootstrapPatches(windowObject, bootstrapSelection, profile);
     if (bootstrapSelection.selected.length > 0) {
       debug(windowObject, 'bootstrap patch selection:', state.patchDecisions);
     }

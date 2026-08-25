@@ -7,7 +7,7 @@ import { root, memoryStorage, installSyntheticBridgeTransport } from './helpers.
 
 const modules = [
   'src/constants.js', 'src/version.js', 'src/runtime-profile.js', 'src/patch-registry.js',
-  'src/patches/force-linux-platform.js', 'src/runtime-discovery.js', 'src/main.js'
+  'src/patches/align-browser-platform-to-runtime.js', 'src/runtime-discovery.js', 'src/main.js'
 ];
 
 function loadApp({ profile, discovered, browserPlatform = 'Win32' }) {
@@ -50,7 +50,7 @@ function loadApp({ profile, discovered, browserPlatform = 'Win32' }) {
   return { context, window, navigator, localStorage, sessionStorage, getReloads: () => reloads };
 }
 
-test('fresh verified Linux profile automatically selects and applies the mismatch patch', async () => {
+test('fresh verified affected profile automatically selects and applies the generic alignment patch', async () => {
   const now = Date.now();
   const profile = {
     schemaVersion: 1, environmentId: 'web-synthetic', endpoint: 'ws://example.invalid/', publicKeyB64: 'public',
@@ -62,12 +62,13 @@ test('fresh verified Linux profile automatically selects and applies the mismatc
   assert.equal(app.getReloads(), 0);
 
   const status = app.window.__orcaWebPatches.getStatus();
-  assert.deepEqual(status.bootstrapSelectedPatchIds, ['force-linux-platform']);
-  assert.deepEqual(status.bootstrapAppliedPatchIds, ['force-linux-platform']);
+  assert.deepEqual(status.bootstrapSelectedPatchIds, ['align-browser-platform-to-runtime']);
+  assert.deepEqual(status.bootstrapAppliedPatchIds, ['align-browser-platform-to-runtime']);
+  assert.equal(status.bootstrapPatchResults[0].reason, 'aligned');
   assert.equal(status.patchDecisions[0].selected, true);
 });
 
-test('matching Linux browser/runtime skips an unnecessary platform patch', async () => {
+test('matching Linux browser/runtime skips an unnecessary alignment patch', async () => {
   const profile = {
     schemaVersion: 1, environmentId: 'web-synthetic', endpoint: 'ws://example.invalid/', publicKeyB64: 'public',
     runtimeId: 'runtime-a', platform: 'linux', appVersion: '1.4.188', verifiedAt: Date.now()
@@ -84,10 +85,10 @@ test('matching Linux browser/runtime skips an unnecessary platform patch', async
   const status = app.window.__orcaWebPatches.getStatus();
   assert.deepEqual(status.bootstrapSelectedPatchIds, []);
   assert.equal(status.bootstrapPatchApplied, false);
-  assert.match(status.patchDecisions[0].reason, /no-match$/);
+  assert.equal(status.patchDecisions[0].reason, 'browser-platform-mismatch');
 });
 
-test('unknown first load does not spoof Linux and requests one reload after automatic selection', async () => {
+test('unknown first load does not mutate browser identity and requests one reload after selection', async () => {
   const app = loadApp({ profile: null, discovered: { runtimeId: 'runtime-a', platform: 'linux', appVersion: '1.4.188' } });
   assert.equal(app.navigator.platform, 'Win32');
   await new Promise((resolve) => setImmediate(resolve));

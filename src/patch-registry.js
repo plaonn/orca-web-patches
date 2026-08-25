@@ -23,22 +23,26 @@
 
   const PATCHES = Object.freeze([
     Object.freeze({
-      id: 'force-linux-platform',
+      id: 'align-browser-platform-to-runtime',
       phase: 'bootstrap',
       appliesTo: Object.freeze({
-        platforms: Object.freeze(['linux']),
+        runtimePlatforms: Object.freeze(['linux']),
+        browserPlatforms: Object.freeze(['win32']),
         versionRange: null,
         probe: 'browser-runtime-platform-mismatch'
       }),
       unknownVersionBehavior: 'apply',
-      unknownProbeBehavior: 'apply',
+      unknownProbeBehavior: 'skip',
       applyUntilFixed: true,
       evidence: Object.freeze({
         confirmedAffected: Object.freeze(['1.4.188']),
+        confirmedAffectedContexts: Object.freeze([
+          Object.freeze({ browserPlatform: 'win32', runtimePlatform: 'linux' })
+        ]),
         upstreamSourceObservedAt: 'cc4801320a75f2fd87f67454e13dae7a63117097',
         fixedIn: null
       }),
-      rationale: 'Orca Web derives its preload platform from the browser instead of the connected runtime.'
+      rationale: 'Align page-visible browser platform identity with the authoritative connected runtime when a verified affected browser/runtime combination requires it.'
     })
   ]);
 
@@ -131,9 +135,20 @@
       return { patchId: patch?.id ?? null, selected: false, reason: 'profile-missing' };
     }
 
-    const platforms = patch.appliesTo?.platforms ?? [];
-    if (platforms.length > 0 && !platforms.includes(profile.platform)) {
-      return { patchId: patch.id, selected: false, reason: 'platform-mismatch' };
+    const runtimePlatforms = patch.appliesTo?.runtimePlatforms ?? [];
+    if (runtimePlatforms.length > 0 && !runtimePlatforms.includes(profile.platform)) {
+      return { patchId: patch.id, selected: false, reason: 'runtime-platform-mismatch' };
+    }
+
+    const browserPlatforms = patch.appliesTo?.browserPlatforms ?? [];
+    if (browserPlatforms.length > 0) {
+      const browserPlatform = normalizeBrowserPlatform(context.browserPlatform);
+      if (!browserPlatform) {
+        return { patchId: patch.id, selected: false, reason: 'browser-platform-unknown' };
+      }
+      if (!browserPlatforms.includes(browserPlatform)) {
+        return { patchId: patch.id, selected: false, reason: 'browser-platform-mismatch' };
+      }
     }
 
     const version = matchesVersion(patch, profile.appVersion);
