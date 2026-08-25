@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { execFileSync } from 'node:child_process';
-import { root, memoryStorage } from './helpers.mjs';
+import { root, memoryStorage, installSyntheticBridgeTransport } from './helpers.mjs';
 
 function executeArtifact({ profile, discovered }) {
   execFileSync(process.execPath, ['scripts/build.mjs'], { cwd: root, stdio: 'pipe' });
@@ -35,28 +35,19 @@ function executeArtifact({ profile, discovered }) {
     appVersion: { configurable: true, get: () => '5.0 (Windows NT 10.0; Win64; x64)' }
   });
   const navigator = new FakeNavigator();
-  const runtimeApi = {
-    list: async () => [{ id: 'web-artifact' }],
-    getStatus: async () => ({
-      ok: true,
-      result: {
-        runtimeId: discovered.runtimeId,
-        appVersion: discovered.appVersion,
-        hostPlatform: discovered.platform
-      },
-      _meta: { runtimeId: discovered.runtimeId }
-    }),
-    call: async () => ({ ok: true, result: { platform: discovered.platform } })
-  };
   const window = {
     localStorage,
     sessionStorage,
     navigator,
-    api: { runtimeEnvironments: runtimeApi },
     location: { search: '', reload: () => { reloads += 1; } },
-    console,
-    setTimeout: (fn) => { queueMicrotask(fn); return 1; }
+    console
   };
+  installSyntheticBridgeTransport(window, {
+    ok: true,
+    runtimeId: discovered.runtimeId,
+    platform: discovered.platform,
+    appVersion: discovered.appVersion
+  });
   const context = vm.createContext({
     window,
     navigator,
