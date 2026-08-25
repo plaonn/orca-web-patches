@@ -151,7 +151,7 @@ test('storage observer survives replacement of window.api.settings and forwards 
   const status = OWP.bridgeWebRuntimeSettings.getStatus();
   assert.equal(status.storageObserverInstalled, true);
   assert.equal(status.lastSyncSource, 'storage-write');
-  assert.deepEqual(status.lastSyncedKeys, ['agentDefaultArgs']);
+  assert.equal(status.lastSyncedKeys.join(','), 'agentDefaultArgs');
 });
 
 test('explicit empty agent args are forwarded so the host cannot silently restore its own defaults', async () => {
