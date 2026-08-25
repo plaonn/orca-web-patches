@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Orca Web Patches
 // @namespace    https://github.com/plaonn/orca-web-patches
-// @version      0.2.1
+// @version      0.2.2
 // @description  Version-aware compatibility patches for Orca Web.
 // @license      MIT
 // @homepageURL  https://github.com/plaonn/orca-web-patches
@@ -27,8 +27,9 @@
     'use strict';
   
     OWP.constants = Object.freeze({
-      SCRIPT_VERSION: '0.2.1',
+      SCRIPT_VERSION: '0.2.2',
       ORCA_ENVIRONMENT_STORAGE_KEY: 'orca.web.runtimeEnvironment.v1',
+      WEB_SETTINGS_STORAGE_KEY: 'orca.web.settings.v1',
       PROFILE_STORAGE_KEY: 'orca.web.patches.runtimeProfile.v1',
       RELOAD_GUARD_KEY: 'orca.web.patches.reloadGuard.v1',
       CACHE_TTL_MS: 6 * 60 * 60 * 1000,
@@ -264,6 +265,28 @@
           fixedIn: null
         }),
         rationale: 'Align page-visible browser platform identity with the authoritative connected runtime when a verified affected browser/runtime combination requires it.'
+      }),
+      Object.freeze({
+        id: 'bridge-web-runtime-settings',
+        phase: 'runtime',
+        appliesTo: Object.freeze({
+          runtimePlatforms: Object.freeze([]),
+          browserPlatforms: Object.freeze([]),
+          versionRange: null,
+          probe: null
+        }),
+        unknownVersionBehavior: 'skip',
+        unknownProbeBehavior: 'skip',
+        applyUntilFixed: true,
+        evidence: Object.freeze({
+          confirmedAffected: Object.freeze(['1.4.188']),
+          confirmedAffectedContexts: Object.freeze([
+            Object.freeze({ client: 'web', runtime: 'paired' })
+          ]),
+          upstreamSourceObservedAt: '4218d5068e252fc4d6db4b146b92716f1b015039',
+          fixedIn: null
+        }),
+        rationale: 'Forward runtime-supported settings that Orca Web persists locally but omits from settings.update when paired to a runtime.'
       })
     ]);
   
@@ -528,6 +551,189 @@
       rewritePlatformTuple,
       createAlignedUserAgentData,
       applyAlignBrowserPlatformToRuntime
+    });
+  })(OWP);
+  
+
+  // ---- src/patches/bridge-web-runtime-settings.js ----
+  ((OWP) => {
+    'use strict';
+  
+    const SETTINGS_SET_MARKER = '__orcaWebPatchesRuntimeSettingsBridgeV1';
+    const BRIDGED_SETTING_KEYS = Object.freeze([
+      'defaultTuiAgent',
+      'disabledTuiAgents',
+      'agentDefaultArgs',
+      'agentDefaultEnv',
+      'defaultTaskSource',
+      'visibleTaskProviders',
+      'defaultTaskViewPreset',
+      'agentStatusHooksEnabled',
+      'defaultRepoSelection',
+      'defaultLinearTeamSelection',
+      'githubProjects'
+    ]);
+  
+    const bridgeState = {
+      installed: false,
+      lastSyncStatus: 'idle',
+      lastSyncedKeys: [],
+      lastError: null
+    };
+  
+    function isRecord(value) {
+      return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+    }
+  
+    function pickBridgedSettings(value) {
+      if (!isRecord(value)) return {};
+      const picked = {};
+      for (const key of BRIDGED_SETTING_KEYS) {
+        if (Object.hasOwn(value, key) && value[key] !== undefined) {
+          picked[key] = value[key];
+        }
+      }
+      return picked;
+    }
+  
+    function readExplicitStoredSettings(windowObject) {
+      try {
+        const raw = windowObject.localStorage?.getItem?.(OWP.constants.WEB_SETTINGS_STORAGE_KEY);
+        if (!raw) return {};
+        const parsed = JSON.parse(raw);
+        return isRecord(parsed) ? parsed : {};
+      } catch {
+        return {};
+      }
+    }
+  
+    function activeEnvironmentSelector(windowObject) {
+      try {
+        return OWP.runtimeProfile.readCurrentEnvironment(windowObject.localStorage)?.environmentId ?? null;
+      } catch {
+        return null;
+      }
+    }
+  
+    function runtimeErrorMessage(response) {
+      if (!response || response.ok !== false) return null;
+      if (typeof response.error?.message === 'string' && response.error.message) {
+        return response.error.message;
+      }
+      if (typeof response.error === 'string' && response.error) return response.error;
+      return 'Runtime settings update failed';
+    }
+  
+    async function updateRuntimeSettings(windowObject, updates) {
+      const bridged = pickBridgedSettings(updates);
+      const keys = Object.keys(bridged);
+      if (keys.length === 0) return null;
+  
+      const selector = activeEnvironmentSelector(windowObject);
+      if (!selector) return null;
+  
+      const runtimeEnvironments = windowObject.api?.runtimeEnvironments;
+      if (typeof runtimeEnvironments?.call !== 'function') {
+        throw new Error('Orca runtime environment API is unavailable');
+      }
+  
+      bridgeState.lastSyncStatus = 'pending';
+      bridgeState.lastSyncedKeys = keys;
+      bridgeState.lastError = null;
+  
+      try {
+        const response = await runtimeEnvironments.call({
+          selector,
+          method: 'settings.update',
+          params: bridged
+        });
+        const message = runtimeErrorMessage(response);
+        if (message) throw new Error(message);
+        bridgeState.lastSyncStatus = 'success';
+        return response;
+      } catch (error) {
+        bridgeState.lastSyncStatus = 'error';
+        bridgeState.lastError = error instanceof Error ? error.message : String(error);
+        throw error;
+      }
+    }
+  
+    function installSettingsSetBridge(windowObject) {
+      const settingsApi = windowObject.api?.settings;
+      if (!settingsApi || typeof settingsApi.set !== 'function') {
+        return { applied: false, reason: 'settings-api-unavailable' };
+      }
+      if (settingsApi.set?.[SETTINGS_SET_MARKER] === true) {
+        bridgeState.installed = true;
+        return { applied: true, reason: 'already-installed' };
+      }
+  
+      const originalSet = settingsApi.set;
+      const wrappedSet = async function wrappedWebSettingsSet(updates) {
+        const result = await Reflect.apply(originalSet, settingsApi, [updates]);
+        const bridged = pickBridgedSettings(updates);
+        if (Object.keys(bridged).length > 0) {
+          await updateRuntimeSettings(windowObject, bridged);
+        }
+        return result;
+      };
+      Object.defineProperty(wrappedSet, SETTINGS_SET_MARKER, { value: true });
+  
+      try {
+        settingsApi.set = wrappedSet;
+      } catch {
+        // Fall through to defineProperty for stricter proxy/object surfaces.
+      }
+      if (settingsApi.set !== wrappedSet) {
+        try {
+          Object.defineProperty(settingsApi, 'set', {
+            value: wrappedSet,
+            configurable: true,
+            writable: true
+          });
+        } catch {
+          return { applied: false, reason: 'settings-set-not-writable' };
+        }
+      }
+  
+      bridgeState.installed = true;
+      return { applied: true, reason: 'installed' };
+    }
+  
+    async function syncExplicitStoredSettings(windowObject) {
+      const explicit = pickBridgedSettings(readExplicitStoredSettings(windowObject));
+      if (Object.keys(explicit).length === 0) return null;
+      return updateRuntimeSettings(windowObject, explicit);
+    }
+  
+    function applyBridgeWebRuntimeSettings(windowObject) {
+      const installed = installSettingsSetBridge(windowObject);
+      if (!installed.applied) {
+        return { applied: false, fields: [], reason: installed.reason };
+      }
+  
+      void syncExplicitStoredSettings(windowObject).catch(() => undefined);
+      return {
+        applied: true,
+        fields: ['settings.set'],
+        reason: installed.reason,
+        bridgedSettingKeys: [...BRIDGED_SETTING_KEYS]
+      };
+    }
+  
+    OWP.bridgeWebRuntimeSettings = Object.freeze({
+      BRIDGED_SETTING_KEYS,
+      pickBridgedSettings,
+      readExplicitStoredSettings,
+      updateRuntimeSettings,
+      syncExplicitStoredSettings,
+      applyBridgeWebRuntimeSettings,
+      getStatus: () => ({
+        installed: bridgeState.installed,
+        lastSyncStatus: bridgeState.lastSyncStatus,
+        lastSyncedKeys: [...bridgeState.lastSyncedKeys],
+        lastError: bridgeState.lastError
+      })
     });
   })(OWP);
   
@@ -828,6 +1034,10 @@
       bootstrapPatchFields: [],
       bootstrapPatchResults: [],
       patchDecisions: [],
+      runtimeSelectedPatchIds: [],
+      runtimeAppliedPatchIds: [],
+      runtimePatchResults: [],
+      runtimePatchDecisions: [],
       discoveryStatus: 'idle',
       lastDiscovery: null,
       reloadRequested: false
@@ -877,6 +1087,10 @@
       return OWP.patchRegistry.selectPatches(profile, selectionContext ?? {}, { phase: 'bootstrap' });
     }
   
+    function selectRuntimePatches(profile) {
+      return OWP.patchRegistry.selectPatches(profile, selectionContext ?? {}, { phase: 'runtime' });
+    }
+  
     function patchIds(selection) {
       return selection.selected.map((patch) => patch.id);
     }
@@ -892,6 +1106,9 @@
           windowObject.navigator,
           profile?.platform
         );
+      }
+      if (patch.id === 'bridge-web-runtime-settings') {
+        return OWP.bridgeWebRuntimeSettings.applyBridgeWebRuntimeSettings(windowObject);
       }
       return { applied: false, fields: [], reason: 'patch-implementation-unavailable' };
     }
@@ -921,6 +1138,27 @@
       state.patchDecisions = selection.decisions;
     }
   
+    function applyRuntimePatches(windowObject, selection, profile) {
+      const appliedPatchIds = [];
+      const results = [];
+  
+      for (const patch of selection.selected) {
+        const result = applyPatch(windowObject, patch, profile);
+        if (result?.applied) appliedPatchIds.push(patch.id);
+        results.push({
+          patchId: patch.id,
+          applied: result?.applied === true,
+          fields: [...(result?.fields ?? [])],
+          reason: result?.reason ?? null
+        });
+      }
+  
+      state.runtimeSelectedPatchIds = patchIds(selection);
+      state.runtimeAppliedPatchIds = appliedPatchIds;
+      state.runtimePatchResults = results;
+      state.runtimePatchDecisions = selection.decisions;
+    }
+  
     function requestBoundedReload(windowObject, reason) {
       const storage = windowObject.sessionStorage;
       const current = storage?.getItem?.(OWP.constants.RELOAD_GUARD_KEY);
@@ -937,7 +1175,13 @@
   
     function installDebugApi(windowObject) {
       const api = Object.freeze({
-        getStatus: () => JSON.parse(JSON.stringify(state)),
+        getStatus: () => {
+          const snapshot = JSON.parse(JSON.stringify(state));
+          if (OWP.bridgeWebRuntimeSettings?.getStatus) {
+            snapshot.runtimeSettingsBridge = OWP.bridgeWebRuntimeSettings.getStatus();
+          }
+          return snapshot;
+        },
         recheck: () => runRevalidation(windowObject),
         clearCache: () => {
           OWP.runtimeProfile.clearProfile(windowObject.localStorage);
@@ -1013,6 +1257,11 @@
       }
   
       clearReloadGuard(windowObject);
+      const runtimeSelection = selectRuntimePatches(profile);
+      applyRuntimePatches(windowObject, runtimeSelection, profile);
+      if (runtimeSelection.selected.length > 0) {
+        debug(windowObject, 'runtime patch selection:', state.runtimePatchDecisions);
+      }
       return state.lastDiscovery;
     }
   
@@ -1049,6 +1298,7 @@
       revalidate: runRevalidation,
       createSelectionContext,
       selectBootstrapPatches,
+      selectRuntimePatches,
       requestBoundedReload
     });
     start();
