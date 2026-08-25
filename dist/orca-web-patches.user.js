@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Orca Web Patches
 // @namespace    https://github.com/plaonn/orca-web-patches
-// @version      0.2.2
+// @version      0.2.3
 // @description  Version-aware compatibility patches for Orca Web.
 // @license      MIT
 // @homepageURL  https://github.com/plaonn/orca-web-patches
@@ -27,7 +27,7 @@
     'use strict';
   
     OWP.constants = Object.freeze({
-      SCRIPT_VERSION: '0.2.2',
+      SCRIPT_VERSION: '0.2.3',
       ORCA_ENVIRONMENT_STORAGE_KEY: 'orca.web.runtimeEnvironment.v1',
       WEB_SETTINGS_STORAGE_KEY: 'orca.web.settings.v1',
       PROFILE_STORAGE_KEY: 'orca.web.patches.runtimeProfile.v1',
@@ -287,6 +287,28 @@
           fixedIn: null
         }),
         rationale: 'Forward runtime-supported settings that Orca Web persists locally but omits from settings.update when paired to a runtime.'
+      }),
+      Object.freeze({
+        id: 'qualify-runtime-worktree-removal-host',
+        phase: 'runtime',
+        appliesTo: Object.freeze({
+          runtimePlatforms: Object.freeze([]),
+          browserPlatforms: Object.freeze([]),
+          versionRange: null,
+          probe: null
+        }),
+        unknownVersionBehavior: 'skip',
+        unknownProbeBehavior: 'skip',
+        applyUntilFixed: true,
+        evidence: Object.freeze({
+          confirmedAffected: Object.freeze(['1.4.188']),
+          confirmedAffectedContexts: Object.freeze([
+            Object.freeze({ client: 'web', runtime: 'paired', operation: 'worktree.rm' })
+          ]),
+          upstreamSourceObservedAt: '32df073e445ccc4e294be6cc71668f5aaa00ceec',
+          fixedIn: null
+        }),
+        rationale: 'Backport upstream paired-runtime worktree removal host qualification so a runtime-local host id is not sent back to the same runtime as a foreign host selector.'
       })
     ]);
   
@@ -856,6 +878,122 @@
   })(OWP);
   
 
+  // ---- src/patches/qualify-runtime-worktree-removal-host.js ----
+  ((OWP) => {
+    'use strict';
+  
+    const CALL_MARKER = '__orcaWebPatchesWorktreeRemovalHostQualificationV1';
+  
+    const patchState = {
+      installed: false,
+      rewrittenCallCount: 0,
+      lastRewrittenSelector: null,
+      lastRewrittenHostId: null,
+      lastError: null
+    };
+  
+    function parseRuntimeEnvironmentId(hostId) {
+      if (typeof hostId !== 'string' || !hostId.startsWith('runtime:')) return null;
+      const encoded = hostId.slice('runtime:'.length);
+      if (!encoded) return null;
+      try {
+        const decoded = decodeURIComponent(encoded);
+        return decoded || null;
+      } catch {
+        return null;
+      }
+    }
+  
+    function qualifyCallRequest(request) {
+      if (!request || typeof request !== 'object' || request.method !== 'worktree.rm') {
+        return { request, rewritten: false };
+      }
+      if (!request.params || typeof request.params !== 'object') {
+        return { request, rewritten: false };
+      }
+  
+      const runtimeEnvironmentId = parseRuntimeEnvironmentId(request.params.hostId);
+      if (!runtimeEnvironmentId || runtimeEnvironmentId !== request.selector) {
+        return { request, rewritten: false };
+      }
+  
+      const params = { ...request.params };
+      const removedHostId = params.hostId;
+      delete params.hostId;
+      return {
+        request: { ...request, params },
+        rewritten: true,
+        removedHostId
+      };
+    }
+  
+    function installRuntimeCallBridge(windowObject) {
+      const runtimeEnvironments = windowObject.api?.runtimeEnvironments;
+      if (!runtimeEnvironments || typeof runtimeEnvironments.call !== 'function') {
+        return { applied: false, reason: 'runtime-call-api-unavailable' };
+      }
+      if (runtimeEnvironments.call?.[CALL_MARKER] === true) {
+        patchState.installed = true;
+        return { applied: true, reason: 'already-installed' };
+      }
+  
+      const originalCall = runtimeEnvironments.call;
+      const wrappedCall = function qualifiedRuntimeCall(...args) {
+        const qualified = qualifyCallRequest(args[0]);
+        if (qualified.rewritten) {
+          patchState.rewrittenCallCount += 1;
+          patchState.lastRewrittenSelector = qualified.request.selector ?? null;
+          patchState.lastRewrittenHostId = qualified.removedHostId ?? null;
+          args[0] = qualified.request;
+        }
+        try {
+          return Reflect.apply(originalCall, runtimeEnvironments, args);
+        } catch (error) {
+          patchState.lastError = error instanceof Error ? error.message : String(error);
+          throw error;
+        }
+      };
+      Object.defineProperty(wrappedCall, CALL_MARKER, { value: true });
+  
+      try {
+        runtimeEnvironments.call = wrappedCall;
+      } catch {
+        // Fall through to defineProperty for stricter preload surfaces.
+      }
+      if (runtimeEnvironments.call !== wrappedCall) {
+        try {
+          Object.defineProperty(runtimeEnvironments, 'call', {
+            value: wrappedCall,
+            configurable: true,
+            writable: true
+          });
+        } catch {
+          return { applied: false, reason: 'runtime-call-not-writable' };
+        }
+      }
+  
+      patchState.installed = true;
+      return {
+        applied: true,
+        fields: ['runtimeEnvironments.call(worktree.rm.hostId)'],
+        reason: 'installed'
+      };
+    }
+  
+    function applyQualifyRuntimeWorktreeRemovalHost(windowObject) {
+      return installRuntimeCallBridge(windowObject);
+    }
+  
+    OWP.qualifyRuntimeWorktreeRemovalHost = Object.freeze({
+      parseRuntimeEnvironmentId,
+      qualifyCallRequest,
+      installRuntimeCallBridge,
+      applyQualifyRuntimeWorktreeRemovalHost,
+      getStatus: () => ({ ...patchState })
+    });
+  })(OWP);
+  
+
   // ---- src/runtime-discovery.js ----
   ((OWP) => {
     'use strict';
@@ -1228,6 +1366,9 @@
       if (patch.id === 'bridge-web-runtime-settings') {
         return OWP.bridgeWebRuntimeSettings.applyBridgeWebRuntimeSettings(windowObject);
       }
+      if (patch.id === 'qualify-runtime-worktree-removal-host') {
+        return OWP.qualifyRuntimeWorktreeRemovalHost.applyQualifyRuntimeWorktreeRemovalHost(windowObject);
+      }
       return { applied: false, fields: [], reason: 'patch-implementation-unavailable' };
     }
   
@@ -1297,6 +1438,9 @@
           const snapshot = JSON.parse(JSON.stringify(state));
           if (OWP.bridgeWebRuntimeSettings?.getStatus) {
             snapshot.runtimeSettingsBridge = OWP.bridgeWebRuntimeSettings.getStatus();
+          }
+          if (OWP.qualifyRuntimeWorktreeRemovalHost?.getStatus) {
+            snapshot.worktreeRemovalHostQualification = OWP.qualifyRuntimeWorktreeRemovalHost.getStatus();
           }
           return snapshot;
         },
