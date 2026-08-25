@@ -6,7 +6,7 @@
   "description": "Version-aware browser compatibility patches for Orca Web.",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "node --test tests/*.test.mjs",
+    "test": "node --test --test-concurrency=1 tests/*.test.mjs",
     "check:public": "node scripts/check-public.mjs",
     "check": "npm run check:syntax && npm run test && npm run build && node --check dist/orca-web-patches.user.js && npm run check:public",
     "check:syntax": "for f in src/*.js src/patches/*.js scripts/*.mjs tests/*.mjs; do node --check \"$f\" || exit 1; done"
