@@ -48,11 +48,9 @@ test('platform and capability probe both participate in automatic selection', ()
     { platform: 'linux', appVersion: '1.4.188' },
     windowsBrowser
   );
-  assert.deepEqual(decision, {
-    patchId: 'force-linux-platform',
-    selected: true,
-    reason: 'probe:browser-runtime-platform-mismatch:match'
-  });
+  assert.equal(decision.patchId, 'force-linux-platform');
+  assert.equal(decision.selected, true);
+  assert.equal(decision.reason, 'probe:browser-runtime-platform-mismatch:match');
 });
 
 test('unknown probe input preserves the patch-specific conservative policy', () => {
@@ -112,7 +110,7 @@ test('selectPatches returns selected patches and explainable decisions for a pha
     { phase: 'bootstrap' }
   );
 
-  assert.deepEqual(selection.selected.map((entry) => entry.id), ['force-linux-platform']);
+  assert.equal(selection.selected.map((entry) => entry.id).join(','), 'force-linux-platform');
   assert.equal(selection.decisions.length, 1);
   assert.equal(selection.decisions[0].selected, true);
 });
