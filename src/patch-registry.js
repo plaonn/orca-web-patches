@@ -26,7 +26,7 @@
       id: 'align-browser-platform-to-runtime',
       phase: 'bootstrap',
       appliesTo: Object.freeze({
-        runtimePlatforms: Object.freeze(['linux']),
+        runtimePlatforms: Object.freeze(['linux', 'darwin']),
         browserPlatforms: Object.freeze(['win32']),
         versionRange: null,
         probe: 'browser-runtime-platform-mismatch'
@@ -37,7 +37,8 @@
       evidence: Object.freeze({
         confirmedAffected: Object.freeze(['1.4.188']),
         confirmedAffectedContexts: Object.freeze([
-          Object.freeze({ browserPlatform: 'win32', runtimePlatform: 'linux' })
+          Object.freeze({ browserPlatform: 'win32', runtimePlatform: 'linux' }),
+          Object.freeze({ browserPlatform: 'win32', runtimePlatform: 'darwin' })
         ]),
         upstreamSourceObservedAt: 'cc4801320a75f2fd87f67454e13dae7a63117097',
         fixedIn: null

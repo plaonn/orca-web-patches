@@ -4,11 +4,13 @@ Browser-side compatibility patches for [Orca Web](https://github.com/stablyai/or
 
 The repository intentionally separates patch policy from local deployment configuration. Hostnames, URLs, ports, paired runtime identities, and runtime caches stay in the browser; they are not repository configuration.
 
-## What v0.1.0 fixes
+## What it fixes
 
-When Orca Web runs in a Windows browser but is paired to a Linux Orca runtime, some web-side code derives platform information from the browser. The first patch makes page-visible browser platform identity Linux **only after the connected Orca runtime has been verified as Linux**.
+When Orca Web runs in a Windows browser but is paired to a non-Windows Orca runtime, affected web-side code can derive platform information from the browser instead of the connected runtime. The `align-browser-platform-to-runtime` patch makes page-visible browser platform identity match the verified runtime for evidence-backed combinations.
 
-It adjusts `navigator.platform`, the OS portion of `navigator.userAgent` / `appVersion`, and Chromium `navigator.userAgentData`. Browser identity/version is preserved: Edge remains Edge, Chrome remains Chrome. It does not rewrite network request headers.
+Current verified combinations are Windows browser → Linux runtime and Windows browser → macOS runtime. Other browser/runtime combinations remain fail-closed until separately verified.
+
+The patch adjusts `navigator.platform`, the OS portion of `navigator.userAgent` / `appVersion`, and Chromium `navigator.userAgentData`. Browser identity/version is preserved: Edge remains Edge, Chrome remains Chrome. It does not rewrite network request headers.
 
 ## Install
 
@@ -41,15 +43,15 @@ The script still no-ops unless Orca Web's own local paired-runtime environment i
 
 ## First use and runtime detection
 
-The platform patch must execute at `document-start`, but authoritative runtime information becomes available later. v0.1.0 handles that without assuming Linux:
+Bootstrap platform patches must execute at `document-start`, but authoritative runtime information becomes available later. The userscript handles that without assuming a target OS:
 
 1. At `document-start`, read only a fresh local runtime profile whose saved Orca environment identity still matches the current pairing.
-2. If that profile says Linux and the patch registry allows the patch, apply it immediately.
+2. Run the patch registry against that verified runtime platform, Orca version, original browser platform, and patch-specific evidence policy.
 3. If no trustworthy profile exists, do not spoof anything.
-4. After Orca Web installs its browser API, query the selected environment with `runtimeEnvironments.getStatus`; use `status.hostPlatform` when available and otherwise call the runtime's `host.platform` RPC.
+4. After Orca Web installs its browser API, query the selected environment through the page-realm bridge with `runtimeEnvironments.getStatus`; use `status.hostPlatform` when available and otherwise call the runtime's `host.platform` RPC.
 5. Cache only non-secret identity/platform/version data. The Orca pairing token is never copied into the patch cache.
 6. If the newly verified state requires a different bootstrap decision, reload once. A session guard prevents a reload loop.
-7. Revalidate on later loads. Switching a paired endpoint/runtime from Linux to Windows therefore corrects the cache and removes the spoof on the next bootstrap.
+7. Revalidate on later loads. Switching a paired endpoint/runtime therefore updates the cached platform and patch selection.
 
 The profile cache expires after six hours. Expired, malformed, identity-mismatched, or conflicting profiles fail closed.
 
@@ -66,7 +68,11 @@ In Edge DevTools → Console:
 })
 ```
 
-On a verified Linux runtime, expect `Linux x86_64`, a UA containing `(X11; Linux x86_64)` while retaining its browser token such as `Edg/...`, and UA Client Hints platform `Linux`.
+For a verified Linux runtime selected from a Windows browser, expect `Linux x86_64`, a UA containing `(X11; Linux x86_64)`, and UA Client Hints platform `Linux`.
+
+For a verified macOS runtime selected from a Windows browser, expect `MacIntel`, a reduced Chromium macOS UA tuple containing `(Macintosh; Intel Mac OS X 10_15_7)`, and UA Client Hints platform `macOS`.
+
+In both cases the browser token such as `Edg/...` remains unchanged.
 
 Add `?orcaWebPatchesDebug=1` to the page URL for concise debug logging. Normal operation is quiet.
 

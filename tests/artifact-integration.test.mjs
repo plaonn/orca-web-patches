@@ -99,6 +99,31 @@ test('generated artifact patches Edge-like navigator from a verified Linux profi
   assert.equal(app.getReloads(), 0);
 });
 
+test('generated artifact patches Edge-like navigator from a verified macOS profile', async () => {
+  const app = executeArtifact({
+    profile: {
+      schemaVersion: 1,
+      environmentId: 'web-artifact',
+      endpoint: 'wss://synthetic.invalid/runtime',
+      publicKeyB64: 'synthetic-public-key',
+      runtimeId: 'runtime-mac',
+      platform: 'darwin',
+      appVersion: '1.4.188',
+      verifiedAt: Date.now()
+    },
+    discovered: { runtimeId: 'runtime-mac', platform: 'darwin', appVersion: '1.4.188' }
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(app.navigator.platform, 'MacIntel');
+  assert.match(app.navigator.userAgent, /Macintosh; Intel Mac OS X 10_15_7/);
+  assert.match(app.navigator.userAgent, /Edg\/151\.0\.0\.0/);
+  const status = app.window.__orcaWebPatches.getStatus();
+  assert.equal(status.bootstrapPatchApplied, true);
+  assert.deepEqual(status.bootstrapSelectedPatchIds, ['align-browser-platform-to-runtime']);
+  assert.equal(status.bootstrapPatchResults[0].reason, 'aligned');
+  assert.equal(app.getReloads(), 0);
+});
+
 test('generated artifact remains unpatched on a verified Windows runtime', async () => {
   const app = executeArtifact({
     profile: {

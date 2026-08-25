@@ -38,9 +38,24 @@ test('aligns an affected Windows browser identity to a verified Linux runtime', 
   assert.equal(navigator.userAgentData.toJSON().platform, 'Linux');
 });
 
-test('unsupported runtime identities fail closed instead of inventing a browser identity', () => {
+test('aligns an affected Windows browser identity to a verified macOS runtime', async () => {
   const navigator = makeNavigator();
   const result = OWP.alignBrowserPlatformToRuntime.applyAlignBrowserPlatformToRuntime(navigator, 'darwin');
+  assert.equal(result.applied, true);
+  assert.equal(result.reason, 'aligned');
+  assert.equal(navigator.platform, 'MacIntel');
+  assert.match(navigator.userAgent, /\(Macintosh; Intel Mac OS X 10_15_7\)/);
+  assert.match(navigator.userAgent, /Edg\/151\.0\.0\.0/);
+  assert.doesNotMatch(navigator.userAgent, /Windows NT/);
+  assert.equal(navigator.userAgentData.platform, 'macOS');
+  assert.equal((await navigator.userAgentData.getHighEntropyValues(['platform', 'platformVersion'])).platform, 'macOS');
+  assert.equal((await navigator.userAgentData.getHighEntropyValues(['platform', 'platformVersion'])).platformVersion, '0.0.0');
+  assert.equal(navigator.userAgentData.toJSON().platform, 'macOS');
+});
+
+test('unsupported runtime identities fail closed instead of inventing a browser identity', () => {
+  const navigator = makeNavigator();
+  const result = OWP.alignBrowserPlatformToRuntime.applyAlignBrowserPlatformToRuntime(navigator, 'freebsd');
   assert.equal(result.applied, false);
   assert.equal(result.reason, 'unsupported-runtime-platform');
   assert.equal(navigator.platform, 'Win32');
