@@ -10,6 +10,10 @@ function loadPatch() {
   ]);
 }
 
+function normalize(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
 function makeWindow() {
   const calls = [];
   const intervals = [];
@@ -67,7 +71,7 @@ test('backfills projectGroups.create and returns the runtime-created group inste
   assert.deepEqual(group, { id: 'g2', name: 'My Group' });
   assert.equal(app.calls.at(-1).selector, 'web-home');
   assert.equal(app.calls.at(-1).method, 'projectGroup.create');
-  assert.deepEqual(app.calls.at(-1).params, { name: 'My Group', createdFrom: 'manual' });
+  assert.deepEqual(normalize(app.calls.at(-1).params), { name: 'My Group', createdFrom: 'manual' });
   const status = OWP.fillWebProjectGroupsApi.getStatus();
   assert.equal(status.lastStatus, 'success');
   assert.equal(status.lastMethod, 'projectGroup.create');
@@ -93,7 +97,7 @@ test('maps the supported ProjectGroups preload contract to paired runtime RPCs',
     app.calls.map((entry) => entry.method),
     ['projectGroup.list', 'projectGroup.update', 'projectGroup.delete', 'projectGroup.moveProject']
   );
-  assert.deepEqual(app.calls.at(-1).params, { repo: 'repo-1', groupId: 'g2', order: 3 });
+  assert.deepEqual(normalize(app.calls.at(-1).params), { repo: 'repo-1', groupId: 'g2', order: 3 });
 });
 
 test('rewrap watcher restores the adapter after Orca replaces window.api', async () => {
