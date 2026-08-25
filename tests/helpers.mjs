@@ -41,3 +41,41 @@ export function memoryStorage(initial = {}) {
     dump: () => Object.fromEntries(map)
   };
 }
+
+export function installSyntheticBridgeTransport(windowObject, discoverPayload) {
+  const listeners = new Set();
+  windowObject.__ORCA_WEB_CLIENT__ = true;
+  windowObject.document = {
+    createElement: () => ({ textContent: '', remove() {} }),
+    documentElement: { appendChild() {} }
+  };
+  windowObject.addEventListener = (type, listener) => {
+    if (type === 'message') listeners.add(listener);
+  };
+  windowObject.removeEventListener = (type, listener) => {
+    if (type === 'message') listeners.delete(listener);
+  };
+  windowObject.postMessage = (message) => {
+    if (!message || message.channel !== 'orca-web-patches.runtime.v1' || message.type !== 'request') return;
+    const payload = message.action === 'ping'
+      ? { ok: true, kind: 'ready' }
+      : typeof discoverPayload === 'function'
+        ? discoverPayload(message)
+        : discoverPayload;
+    queueMicrotask(() => {
+      const event = {
+        source: windowObject,
+        data: {
+          channel: 'orca-web-patches.runtime.v1',
+          type: 'response',
+          requestId: message.requestId,
+          payload
+        }
+      };
+      for (const listener of [...listeners]) listener(event);
+    });
+  };
+  windowObject.setTimeout = setTimeout;
+  windowObject.clearTimeout = clearTimeout;
+  return windowObject;
+}
