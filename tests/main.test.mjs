@@ -10,7 +10,7 @@ const modules = [
   'src/patches/force-linux-platform.js', 'src/runtime-discovery.js', 'src/main.js'
 ];
 
-function loadApp({ profile, discovered }) {
+function loadApp({ profile, discovered, browserPlatform = 'Win32' }) {
   const environment = {
     id: 'web-synthetic', preferredEndpointId: 'endpoint',
     endpoints: [{ id: 'endpoint', endpoint: 'ws://example.invalid/', publicKeyB64: 'public' }]
@@ -24,9 +24,13 @@ function loadApp({ profile, discovered }) {
   class FakeNavigator {}
   const navigator = new FakeNavigator();
   Object.assign(navigator, {
-    platform: 'Win32',
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/151.0.0.0 Safari/537.36 Edg/151.0.0.0',
-    appVersion: '5.0 (Windows NT 10.0; Win64; x64)'
+    platform: browserPlatform,
+    userAgent: browserPlatform.startsWith('Win')
+      ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/151.0.0.0 Safari/537.36 Edg/151.0.0.0'
+      : 'Mozilla/5.0 (X11; Linux x86_64) Chrome/151.0.0.0 Safari/537.36 Edg/151.0.0.0',
+    appVersion: browserPlatform.startsWith('Win')
+      ? '5.0 (Windows NT 10.0; Win64; x64)'
+      : '5.0 (X11; Linux x86_64)'
   });
   const window = {
     localStorage, sessionStorage, navigator,
@@ -46,7 +50,7 @@ function loadApp({ profile, discovered }) {
   return { context, window, navigator, localStorage, sessionStorage, getReloads: () => reloads };
 }
 
-test('fresh verified Linux profile patches at bootstrap', async () => {
+test('fresh verified Linux profile automatically selects and applies the mismatch patch', async () => {
   const now = Date.now();
   const profile = {
     schemaVersion: 1, environmentId: 'web-synthetic', endpoint: 'ws://example.invalid/', publicKeyB64: 'public',
@@ -56,16 +60,42 @@ test('fresh verified Linux profile patches at bootstrap', async () => {
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(app.navigator.platform, 'Linux x86_64');
   assert.equal(app.getReloads(), 0);
+
+  const status = app.window.__orcaWebPatches.getStatus();
+  assert.deepEqual(status.bootstrapSelectedPatchIds, ['force-linux-platform']);
+  assert.deepEqual(status.bootstrapAppliedPatchIds, ['force-linux-platform']);
+  assert.equal(status.patchDecisions[0].selected, true);
 });
 
-test('unknown first load does not spoof Linux and requests one reload after discovery', async () => {
+test('matching Linux browser/runtime skips an unnecessary platform patch', async () => {
+  const profile = {
+    schemaVersion: 1, environmentId: 'web-synthetic', endpoint: 'ws://example.invalid/', publicKeyB64: 'public',
+    runtimeId: 'runtime-a', platform: 'linux', appVersion: '1.4.188', verifiedAt: Date.now()
+  };
+  const app = loadApp({
+    profile,
+    discovered: { runtimeId: 'runtime-a', platform: 'linux', appVersion: '1.4.188' },
+    browserPlatform: 'Linux x86_64'
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(app.navigator.platform, 'Linux x86_64');
+  assert.equal(app.getReloads(), 0);
+
+  const status = app.window.__orcaWebPatches.getStatus();
+  assert.deepEqual(status.bootstrapSelectedPatchIds, []);
+  assert.equal(status.bootstrapPatchApplied, false);
+  assert.match(status.patchDecisions[0].reason, /no-match$/);
+});
+
+test('unknown first load does not spoof Linux and requests one reload after automatic selection', async () => {
   const app = loadApp({ profile: null, discovered: { runtimeId: 'runtime-a', platform: 'linux', appVersion: '1.4.188' } });
   assert.equal(app.navigator.platform, 'Win32');
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(app.getReloads(), 1);
+  assert.equal(app.window.__orcaWebPatches.getStatus().patchDecisions[0].selected, true);
 });
 
-test('stale Linux cache corrected to Windows requests reload and next bootstrap will not spoof', async () => {
+test('stale Linux cache corrected to Windows requests reload and next bootstrap will select no patch', async () => {
   const profile = {
     schemaVersion: 1, environmentId: 'web-synthetic', endpoint: 'ws://example.invalid/', publicKeyB64: 'public',
     runtimeId: 'runtime-old', platform: 'linux', appVersion: '1.4.188', verifiedAt: Date.now()
@@ -76,4 +106,5 @@ test('stale Linux cache corrected to Windows requests reload and next bootstrap 
   assert.equal(app.getReloads(), 1);
   const cached = JSON.parse(app.localStorage.getItem('orca.web.patches.runtimeProfile.v1'));
   assert.equal(cached.platform, 'win32');
+  assert.deepEqual(app.window.__orcaWebPatches.getStatus().patchDecisions.map((entry) => entry.selected), [false]);
 });
