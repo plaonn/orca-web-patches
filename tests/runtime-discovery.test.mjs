@@ -5,10 +5,12 @@ import { loadModules } from './helpers.mjs';
 const OWP = loadModules(['src/constants.js', 'src/runtime-profile.js', 'src/runtime-discovery.js']);
 const expected = { environmentId: 'web-synthetic', endpoint: 'ws://example.invalid/', publicKeyB64: 'public' };
 
-function fakeWindow(api) {
+function fakeWindow(api, { ready = true } = {}) {
   return {
+    __ORCA_WEB_CLIENT__: ready,
     api: { runtimeEnvironments: api },
-    setTimeout: (fn) => { fn(); return 1; }
+    setTimeout: (fn) => { queueMicrotask(fn); return 1; },
+    clearTimeout: () => {}
   };
 }
 
@@ -66,12 +68,26 @@ test('missing environment identity and malformed platform fail closed', async ()
   assert.equal(malformed.stage, 'platform');
 });
 
-test('runtime api readiness does not depend on list()', async () => {
-  const api = await OWP.runtimeDiscovery.waitForRuntimeApi(fakeWindow({
-    list: () => new Promise(() => {}),
+test('runtime api readiness requires the installed Orca Web preload', async () => {
+  const api = {
     getStatus: async () => ({}),
     call: async () => ({})
-  }));
-  assert.equal(typeof api.getStatus, 'function');
-  assert.equal(typeof api.call, 'function');
+  };
+  const pending = OWP.runtimeDiscovery.waitForRuntimeApi(fakeWindow(api, { ready: false }), 0);
+  assert.equal(await pending, null);
+  const ready = await OWP.runtimeDiscovery.waitForRuntimeApi(fakeWindow(api));
+  assert.equal(typeof ready.getStatus, 'function');
+  assert.equal(typeof ready.call, 'function');
+});
+
+test('hung runtime call is bounded by the userscript timeout wrapper', async () => {
+  await assert.rejects(
+    OWP.runtimeDiscovery.withTimeout(
+      fakeWindow({}),
+      () => new Promise(() => {}),
+      1,
+      'runtime-status'
+    ),
+    (error) => error?.code === 'OWP_RUNTIME_CALL_TIMEOUT'
+  );
 });
