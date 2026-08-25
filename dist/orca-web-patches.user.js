@@ -243,22 +243,26 @@
   
     const PATCHES = Object.freeze([
       Object.freeze({
-        id: 'force-linux-platform',
+        id: 'align-browser-platform-to-runtime',
         phase: 'bootstrap',
         appliesTo: Object.freeze({
-          platforms: Object.freeze(['linux']),
+          runtimePlatforms: Object.freeze(['linux']),
+          browserPlatforms: Object.freeze(['win32']),
           versionRange: null,
           probe: 'browser-runtime-platform-mismatch'
         }),
         unknownVersionBehavior: 'apply',
-        unknownProbeBehavior: 'apply',
+        unknownProbeBehavior: 'skip',
         applyUntilFixed: true,
         evidence: Object.freeze({
           confirmedAffected: Object.freeze(['1.4.188']),
+          confirmedAffectedContexts: Object.freeze([
+            Object.freeze({ browserPlatform: 'win32', runtimePlatform: 'linux' })
+          ]),
           upstreamSourceObservedAt: 'cc4801320a75f2fd87f67454e13dae7a63117097',
           fixedIn: null
         }),
-        rationale: 'Orca Web derives its preload platform from the browser instead of the connected runtime.'
+        rationale: 'Align page-visible browser platform identity with the authoritative connected runtime when a verified affected browser/runtime combination requires it.'
       })
     ]);
   
@@ -351,9 +355,20 @@
         return { patchId: patch?.id ?? null, selected: false, reason: 'profile-missing' };
       }
   
-      const platforms = patch.appliesTo?.platforms ?? [];
-      if (platforms.length > 0 && !platforms.includes(profile.platform)) {
-        return { patchId: patch.id, selected: false, reason: 'platform-mismatch' };
+      const runtimePlatforms = patch.appliesTo?.runtimePlatforms ?? [];
+      if (runtimePlatforms.length > 0 && !runtimePlatforms.includes(profile.platform)) {
+        return { patchId: patch.id, selected: false, reason: 'runtime-platform-mismatch' };
+      }
+  
+      const browserPlatforms = patch.appliesTo?.browserPlatforms ?? [];
+      if (browserPlatforms.length > 0) {
+        const browserPlatform = normalizeBrowserPlatform(context.browserPlatform);
+        if (!browserPlatform) {
+          return { patchId: patch.id, selected: false, reason: 'browser-platform-unknown' };
+        }
+        if (!browserPlatforms.includes(browserPlatform)) {
+          return { patchId: patch.id, selected: false, reason: 'browser-platform-mismatch' };
+        }
       }
   
       const version = matchesVersion(patch, profile.appVersion);
@@ -398,9 +413,18 @@
   })(OWP);
   
 
-  // ---- src/patches/force-linux-platform.js ----
+  // ---- src/patches/align-browser-platform-to-runtime.js ----
   ((OWP) => {
     'use strict';
+  
+    const TARGET_IDENTITIES = Object.freeze({
+      linux: Object.freeze({
+        navigatorPlatform: 'Linux x86_64',
+        userAgentPlatform: 'X11; Linux x86_64',
+        userAgentDataPlatform: 'Linux',
+        platformVersion: '0.0.0'
+      })
+    });
   
     function defineNavigatorValue(navigatorObject, name, value) {
       const descriptor = { get: () => value, configurable: true };
@@ -419,24 +443,19 @@
       }
     }
   
-    function linuxUserAgent(userAgent) {
-      if (typeof userAgent !== 'string') return userAgent;
-      if (/\(Windows NT [^)]+\)/.test(userAgent)) {
-        return userAgent.replace(/\(Windows NT [^)]+\)/, '(X11; Linux x86_64)');
-      }
-      return userAgent;
+    function rewritePlatformTuple(value, targetIdentity) {
+      if (typeof value !== 'string' || !targetIdentity) return value;
+      const knownPlatformTuple = /\((?:Windows NT [^)]+|X11; Linux [^)]+|Macintosh; Intel Mac OS X [^)]+)\)/;
+      return knownPlatformTuple.test(value)
+        ? value.replace(knownPlatformTuple, `(${targetIdentity.userAgentPlatform})`)
+        : value;
     }
   
-    function linuxAppVersion(appVersion) {
-      if (typeof appVersion !== 'string') return appVersion;
-      return appVersion.replace(/Windows NT [^;)]+(?:; Win64; x64)?/g, 'X11; Linux x86_64');
-    }
-  
-    function createLinuxUserAgentData(original) {
-      if (!original || typeof original !== 'object') return original;
+    function createAlignedUserAgentData(original, targetIdentity) {
+      if (!original || typeof original !== 'object' || !targetIdentity) return original;
       return new Proxy(original, {
         get(target, property) {
-          if (property === 'platform') return 'Linux';
+          if (property === 'platform') return targetIdentity.userAgentDataPlatform;
           if (property === 'getHighEntropyValues') {
             return async (hints = []) => {
               const originalMethod = Reflect.get(target, property, target);
@@ -444,8 +463,8 @@
                 ? await originalMethod.call(target, hints)
                 : {};
               const next = { ...result };
-              if (hints.includes('platform')) next.platform = 'Linux';
-              if (hints.includes('platformVersion')) next.platformVersion = '0.0.0';
+              if (hints.includes('platform')) next.platform = targetIdentity.userAgentDataPlatform;
+              if (hints.includes('platformVersion')) next.platformVersion = targetIdentity.platformVersion;
               return next;
             };
           }
@@ -453,7 +472,7 @@
             return () => {
               const method = Reflect.get(target, property, target);
               const result = typeof method === 'function' ? method.call(target) : {};
-              return { ...result, platform: 'Linux' };
+              return { ...result, platform: targetIdentity.userAgentDataPlatform };
             };
           }
           const value = Reflect.get(target, property, target);
@@ -462,13 +481,23 @@
       });
     }
   
-    function applyForceLinuxPlatform(navigatorObject = globalThis.navigator) {
-      if (!navigatorObject) return { applied: false, fields: [] };
-      const fields = [];
-      const userAgent = linuxUserAgent(navigatorObject.userAgent);
-      const appVersion = linuxAppVersion(navigatorObject.appVersion);
+    function applyAlignBrowserPlatformToRuntime(
+      navigatorObject = globalThis.navigator,
+      runtimePlatform
+    ) {
+      if (!navigatorObject) return { applied: false, fields: [], reason: 'navigator-unavailable' };
+      const targetIdentity = TARGET_IDENTITIES[runtimePlatform] ?? null;
+      if (!targetIdentity) {
+        return { applied: false, fields: [], reason: 'unsupported-runtime-platform' };
+      }
   
-      if (defineNavigatorValue(navigatorObject, 'platform', 'Linux x86_64')) fields.push('platform');
+      const fields = [];
+      const userAgent = rewritePlatformTuple(navigatorObject.userAgent, targetIdentity);
+      const appVersion = rewritePlatformTuple(navigatorObject.appVersion, targetIdentity);
+  
+      if (defineNavigatorValue(navigatorObject, 'platform', targetIdentity.navigatorPlatform)) {
+        fields.push('platform');
+      }
       if (typeof userAgent === 'string' && defineNavigatorValue(navigatorObject, 'userAgent', userAgent)) {
         fields.push('userAgent');
       }
@@ -476,17 +505,22 @@
         fields.push('appVersion');
       }
       if (navigatorObject.userAgentData) {
-        const proxy = createLinuxUserAgentData(navigatorObject.userAgentData);
+        const proxy = createAlignedUserAgentData(navigatorObject.userAgentData, targetIdentity);
         if (defineNavigatorValue(navigatorObject, 'userAgentData', proxy)) fields.push('userAgentData');
       }
-      return { applied: fields.length > 0, fields };
+  
+      return {
+        applied: fields.length > 0,
+        fields,
+        reason: fields.length > 0 ? 'aligned' : 'no-fields-aligned'
+      };
     }
   
-    OWP.forceLinuxPlatform = Object.freeze({
-      linuxUserAgent,
-      linuxAppVersion,
-      createLinuxUserAgentData,
-      applyForceLinuxPlatform
+    OWP.alignBrowserPlatformToRuntime = Object.freeze({
+      TARGET_IDENTITIES,
+      rewritePlatformTuple,
+      createAlignedUserAgentData,
+      applyAlignBrowserPlatformToRuntime
     });
   })(OWP);
   
@@ -845,26 +879,30 @@
       return left.every((id, index) => id === right[index]);
     }
   
-    function applyPatch(windowObject, patch) {
-      if (patch.id === 'force-linux-platform') {
-        return OWP.forceLinuxPlatform.applyForceLinuxPlatform(windowObject.navigator);
+    function applyPatch(windowObject, patch, profile) {
+      if (patch.id === 'align-browser-platform-to-runtime') {
+        return OWP.alignBrowserPlatformToRuntime.applyAlignBrowserPlatformToRuntime(
+          windowObject.navigator,
+          profile?.platform
+        );
       }
-      return { applied: false, fields: [] };
+      return { applied: false, fields: [], reason: 'patch-implementation-unavailable' };
     }
   
-    function applyBootstrapPatches(windowObject, selection) {
+    function applyBootstrapPatches(windowObject, selection, profile) {
       const appliedPatchIds = [];
       const fields = [];
       const results = [];
   
       for (const patch of selection.selected) {
-        const result = applyPatch(windowObject, patch);
+        const result = applyPatch(windowObject, patch, profile);
         if (result?.applied) appliedPatchIds.push(patch.id);
         for (const field of result?.fields ?? []) fields.push(field);
         results.push({
           patchId: patch.id,
           applied: result?.applied === true,
-          fields: [...(result?.fields ?? [])]
+          fields: [...(result?.fields ?? [])],
+          reason: result?.reason ?? null
         });
       }
   
@@ -989,7 +1027,7 @@
       state.bootstrapProfile = summarizeProfile(profile);
   
       const bootstrapSelection = selectBootstrapPatches(profile);
-      applyBootstrapPatches(windowObject, bootstrapSelection);
+      applyBootstrapPatches(windowObject, bootstrapSelection, profile);
       if (bootstrapSelection.selected.length > 0) {
         debug(windowObject, 'bootstrap patch selection:', state.patchDecisions);
       }
