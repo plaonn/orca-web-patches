@@ -44,6 +44,28 @@
         fixedIn: null
       }),
       rationale: 'Align page-visible browser platform identity with the authoritative connected runtime when a verified affected browser/runtime combination requires it.'
+    }),
+    Object.freeze({
+      id: 'bridge-web-runtime-settings',
+      phase: 'runtime',
+      appliesTo: Object.freeze({
+        runtimePlatforms: Object.freeze([]),
+        browserPlatforms: Object.freeze([]),
+        versionRange: null,
+        probe: null
+      }),
+      unknownVersionBehavior: 'skip',
+      unknownProbeBehavior: 'skip',
+      applyUntilFixed: true,
+      evidence: Object.freeze({
+        confirmedAffected: Object.freeze(['1.4.188']),
+        confirmedAffectedContexts: Object.freeze([
+          Object.freeze({ client: 'web', runtime: 'paired' })
+        ]),
+        upstreamSourceObservedAt: '4218d5068e252fc4d6db4b146b92716f1b015039',
+        fixedIn: null
+      }),
+      rationale: 'Forward runtime-supported settings that Orca Web persists locally but omits from settings.update when paired to a runtime.'
     })
   ]);
 
