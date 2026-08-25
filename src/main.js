@@ -90,6 +90,9 @@
     if (patch.id === 'qualify-runtime-worktree-removal-host') {
       return OWP.qualifyRuntimeWorktreeRemovalHost.applyQualifyRuntimeWorktreeRemovalHost(windowObject);
     }
+    if (patch.id === 'fill-web-project-groups-api') {
+      return OWP.fillWebProjectGroupsApi.applyFillWebProjectGroupsApi(windowObject);
+    }
     return { applied: false, fields: [], reason: 'patch-implementation-unavailable' };
   }
 
@@ -162,6 +165,9 @@
         }
         if (OWP.qualifyRuntimeWorktreeRemovalHost?.getStatus) {
           snapshot.worktreeRemovalHostQualification = OWP.qualifyRuntimeWorktreeRemovalHost.getStatus();
+        }
+        if (OWP.fillWebProjectGroupsApi?.getStatus) {
+          snapshot.webProjectGroupsAdapter = OWP.fillWebProjectGroupsApi.getStatus();
         }
         return snapshot;
       },
