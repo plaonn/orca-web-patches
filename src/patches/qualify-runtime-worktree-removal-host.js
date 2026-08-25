@@ -3,11 +3,15 @@
 
   const CALL_MARKER = '__orcaWebPatchesWorktreeRemovalHostQualificationV1';
   const REMOVE_MARKER = '__orcaWebPatchesWorktreeRemoveQualificationV1';
+  const REWRAP_INTERVAL_MS = 250;
 
   const patchState = {
     installed: false,
+    watcherInstalled: false,
     runtimeCallWrapped: false,
     worktreesRemoveWrapped: false,
+    runtimeCallWrapCount: 0,
+    worktreesRemoveWrapCount: 0,
     observedRuntimeCallCount: 0,
     observedWorktreesRemoveCount: 0,
     rewrittenCallCount: 0,
@@ -17,6 +21,9 @@
     lastRewriteSurface: null,
     lastError: null
   };
+
+  let watcherHandle = null;
+  let activeWindowObject = null;
 
   function parseRuntimeEnvironmentId(hostId) {
     if (typeof hostId !== 'string' || !hostId.startsWith('runtime:')) return null;
@@ -86,6 +93,7 @@
   function wrapRuntimeCall(windowObject) {
     const runtimeEnvironments = windowObject.api?.runtimeEnvironments;
     if (!runtimeEnvironments || typeof runtimeEnvironments.call !== 'function') {
+      patchState.runtimeCallWrapped = false;
       return { applied: false, reason: 'runtime-call-api-unavailable' };
     }
     if (runtimeEnvironments.call?.[CALL_MARKER] === true) {
@@ -126,17 +134,20 @@
           writable: true
         });
       } catch {
+        patchState.runtimeCallWrapped = false;
         return { applied: false, reason: 'runtime-call-not-writable' };
       }
     }
 
     patchState.runtimeCallWrapped = true;
+    patchState.runtimeCallWrapCount += 1;
     return { applied: true, reason: 'installed' };
   }
 
   function wrapWorktreesRemove(windowObject) {
     const worktrees = windowObject.api?.worktrees;
     if (!worktrees || typeof worktrees.remove !== 'function') {
+      patchState.worktreesRemoveWrapped = false;
       return { applied: false, reason: 'worktrees-remove-api-unavailable' };
     }
     if (worktrees.remove?.[REMOVE_MARKER] === true) {
@@ -177,26 +188,63 @@
           writable: true
         });
       } catch {
+        patchState.worktreesRemoveWrapped = false;
         return { applied: false, reason: 'worktrees-remove-not-writable' };
       }
     }
 
     patchState.worktreesRemoveWrapped = true;
+    patchState.worktreesRemoveWrapCount += 1;
     return { applied: true, reason: 'installed' };
   }
 
-  function installRuntimeRemovalQualification(windowObject) {
+  function ensureCurrentWrappers(windowObject = activeWindowObject) {
+    if (!windowObject) return { applied: false, reason: 'window-unavailable' };
     const runtimeResult = wrapRuntimeCall(windowObject);
     const removeResult = wrapWorktreesRemove(windowObject);
     const applied = runtimeResult.applied || removeResult.applied;
     patchState.installed = applied;
     return {
       applied,
+      runtimeResult,
+      removeResult
+    };
+  }
+
+  function installWatcher(windowObject) {
+    activeWindowObject = windowObject;
+    if (watcherHandle !== null) {
+      patchState.watcherInstalled = true;
+      return true;
+    }
+    if (typeof windowObject.setInterval !== 'function') {
+      return false;
+    }
+    watcherHandle = windowObject.setInterval(() => {
+      try {
+        ensureCurrentWrappers(windowObject);
+      } catch (error) {
+        patchState.lastError = error instanceof Error ? error.message : String(error);
+      }
+    }, REWRAP_INTERVAL_MS);
+    patchState.watcherInstalled = true;
+    return true;
+  }
+
+  function installRuntimeRemovalQualification(windowObject) {
+    activeWindowObject = windowObject;
+    const ensured = ensureCurrentWrappers(windowObject);
+    installWatcher(windowObject);
+    return {
+      applied: ensured.applied,
       fields: [
-        ...(runtimeResult.applied ? ['runtimeEnvironments.call(worktree.rm.hostId)'] : []),
-        ...(removeResult.applied ? ['worktrees.remove(hostId)'] : [])
+        ...(ensured.runtimeResult?.applied ? ['runtimeEnvironments.call(worktree.rm.hostId)'] : []),
+        ...(ensured.removeResult?.applied ? ['worktrees.remove(hostId)'] : []),
+        ...(patchState.watcherInstalled ? ['runtime-removal-api-rewrap-watcher'] : [])
       ],
-      reason: applied ? 'installed' : `${runtimeResult.reason};${removeResult.reason}`
+      reason: ensured.applied
+        ? 'installed'
+        : `${ensured.runtimeResult?.reason ?? 'runtime-call-unknown'};${ensured.removeResult?.reason ?? 'worktrees-remove-unknown'}`
     };
   }
 
@@ -211,8 +259,16 @@
     qualifyWorktreesRemoveArgs,
     wrapRuntimeCall,
     wrapWorktreesRemove,
+    ensureCurrentWrappers,
     installRuntimeRemovalQualification,
     applyQualifyRuntimeWorktreeRemovalHost,
-    getStatus: () => ({ ...patchState })
+    getStatus: () => {
+      try {
+        ensureCurrentWrappers();
+      } catch {
+        // Status must remain readable even if Orca is swapping its preload API.
+      }
+      return { ...patchState };
+    }
   });
 })(globalThis.__OWP__);
