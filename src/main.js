@@ -11,7 +11,6 @@
     lastDiscovery: null,
     reloadRequested: false
   };
-  let activeRevalidation = null;
 
   function summarizeProfile(profile) {
     return profile ? {
@@ -66,7 +65,7 @@
   function installDebugApi(windowObject) {
     const api = Object.freeze({
       getStatus: () => JSON.parse(JSON.stringify(state)),
-      recheck: () => revalidate(windowObject),
+      recheck: () => runRevalidation(windowObject),
       clearCache: () => {
         OWP.runtimeProfile.clearProfile(windowObject.localStorage);
         clearReloadGuard(windowObject);
@@ -141,14 +140,6 @@
     return state.lastDiscovery;
   }
 
-  function revalidate(windowObject) {
-    if (activeRevalidation) return activeRevalidation;
-    activeRevalidation = runRevalidation(windowObject).finally(() => {
-      activeRevalidation = null;
-    });
-    return activeRevalidation;
-  }
-
   function start(windowObject = globalThis.window) {
     if (!windowObject?.localStorage) return state;
     const environment = OWP.runtimeProfile.readCurrentEnvironment(windowObject.localStorage);
@@ -171,10 +162,10 @@
     }
 
     installDebugApi(windowObject);
-    void revalidate(windowObject);
+    void runRevalidation(windowObject);
     return state;
   }
 
-  OWP.main = Object.freeze({ start, revalidate, wantsLinuxPatch, requestBoundedReload });
+  OWP.main = Object.freeze({ start, revalidate: runRevalidation, wantsLinuxPatch, requestBoundedReload });
   start();
 })(globalThis.__OWP__);
