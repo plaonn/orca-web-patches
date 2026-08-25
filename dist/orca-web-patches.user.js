@@ -1,8 +1,9 @@
 // ==UserScript==
 // @name         Orca Web Patches
 // @namespace    https://github.com/plaonn/orca-web-patches
-// @version      0.1.0
+// @version      0.1.1
 // @description  Version-aware compatibility patches for Orca Web.
+// @license      MIT
 // @homepageURL  https://github.com/plaonn/orca-web-patches
 // @supportURL   https://github.com/plaonn/orca-web-patches/issues
 // @updateURL    https://raw.githubusercontent.com/plaonn/orca-web-patches/main/dist/orca-web-patches.user.js
@@ -26,7 +27,7 @@
     'use strict';
   
     OWP.constants = Object.freeze({
-      SCRIPT_VERSION: '0.1.0',
+      SCRIPT_VERSION: '0.1.1',
       ORCA_ENVIRONMENT_STORAGE_KEY: 'orca.web.runtimeEnvironment.v1',
       PROFILE_STORAGE_KEY: 'orca.web.patches.runtimeProfile.v1',
       RELOAD_GUARD_KEY: 'orca.web.patches.reloadGuard.v1',
