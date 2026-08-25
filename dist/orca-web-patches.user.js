@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Orca Web Patches
 // @namespace    https://github.com/plaonn/orca-web-patches
-// @version      0.1.2
+// @version      0.2.0
 // @description  Version-aware compatibility patches for Orca Web.
 // @license      MIT
 // @homepageURL  https://github.com/plaonn/orca-web-patches
@@ -27,7 +27,7 @@
     'use strict';
   
     OWP.constants = Object.freeze({
-      SCRIPT_VERSION: '0.1.2',
+      SCRIPT_VERSION: '0.2.0',
       ORCA_ENVIRONMENT_STORAGE_KEY: 'orca.web.runtimeEnvironment.v1',
       PROFILE_STORAGE_KEY: 'orca.web.patches.runtimeProfile.v1',
       RELOAD_GUARD_KEY: 'orca.web.patches.reloadGuard.v1',
@@ -221,12 +221,37 @@
   ((OWP) => {
     'use strict';
   
+    function normalizeBrowserPlatform(value) {
+      if (typeof value !== 'string' || !value.trim()) return null;
+      const normalized = value.trim().toLowerCase();
+      if (normalized.includes('android')) return 'android';
+      if (normalized.includes('win')) return 'win32';
+      if (normalized.includes('mac')) return 'darwin';
+      if (normalized.includes('linux')) return 'linux';
+      return null;
+    }
+  
+    const PROBES = Object.freeze({
+      'browser-runtime-platform-mismatch': Object.freeze({
+        evaluate(profile, context = {}) {
+          const browserPlatform = normalizeBrowserPlatform(context.browserPlatform);
+          if (!browserPlatform || typeof profile?.platform !== 'string') return null;
+          return browserPlatform !== profile.platform;
+        }
+      })
+    });
+  
     const PATCHES = Object.freeze([
       Object.freeze({
         id: 'force-linux-platform',
         phase: 'bootstrap',
-        platforms: Object.freeze(['linux']),
+        appliesTo: Object.freeze({
+          platforms: Object.freeze(['linux']),
+          versionRange: null,
+          probe: 'browser-runtime-platform-mismatch'
+        }),
         unknownVersionBehavior: 'apply',
+        unknownProbeBehavior: 'apply',
         applyUntilFixed: true,
         evidence: Object.freeze({
           confirmedAffected: Object.freeze(['1.4.188']),
@@ -241,26 +266,135 @@
       return PATCHES.find((patch) => patch.id === id) ?? null;
     }
   
-    function shouldApplyPatch(patch, profile) {
-      if (!patch || !profile) return false;
-      if (!patch.platforms.includes(profile.platform)) return false;
+    function unknownDecision(behavior) {
+      return behavior === 'apply';
+    }
+  
+    function matchesVersion(patch, appVersion) {
+      if (typeof appVersion !== 'string' || OWP.versioning.parseSemver(appVersion) === null) {
+        return {
+          matches: unknownDecision(patch.unknownVersionBehavior),
+          reason: 'version-unknown'
+        };
+      }
+  
+      const range = patch.appliesTo?.versionRange ?? null;
+      if (range?.minInclusive) {
+        const compared = OWP.versioning.compareSemver(appVersion, range.minInclusive);
+        if (compared === null) {
+          return { matches: unknownDecision(patch.unknownVersionBehavior), reason: 'version-range-unknown' };
+        }
+        if (compared < 0) return { matches: false, reason: 'version-before-range' };
+      }
+  
+      if (range?.maxExclusive) {
+        const compared = OWP.versioning.compareSemver(appVersion, range.maxExclusive);
+        if (compared === null) {
+          return { matches: unknownDecision(patch.unknownVersionBehavior), reason: 'version-range-unknown' };
+        }
+        if (compared >= 0) return { matches: false, reason: 'version-after-range' };
+      }
   
       const fixedIn = patch.evidence?.fixedIn ?? null;
       if (fixedIn) {
-        const compared = OWP.versioning.compareSemver(profile.appVersion, fixedIn);
-        if (compared !== null && compared >= 0) return false;
-        if (compared === null) return patch.unknownVersionBehavior === 'apply';
+        const compared = OWP.versioning.compareSemver(appVersion, fixedIn);
+        if (compared === null) {
+          return { matches: unknownDecision(patch.unknownVersionBehavior), reason: 'fixed-version-unknown' };
+        }
+        if (compared >= 0) return { matches: false, reason: 'upstream-fixed' };
       }
   
-      if (profile.appVersion === null || OWP.versioning.parseSemver(profile.appVersion) === null) {
-        return patch.unknownVersionBehavior === 'apply';
+      if (range?.minInclusive || range?.maxExclusive) {
+        return { matches: true, reason: 'version-in-range' };
       }
   
-      return patch.applyUntilFixed === true
-        || patch.evidence.confirmedAffected.includes(profile.appVersion);
+      if (patch.applyUntilFixed === true) {
+        return { matches: true, reason: 'version-before-known-fix' };
+      }
+  
+      const confirmed = patch.evidence?.confirmedAffected ?? [];
+      return {
+        matches: confirmed.includes(appVersion),
+        reason: confirmed.includes(appVersion) ? 'version-confirmed-affected' : 'version-not-confirmed'
+      };
     }
   
-    OWP.patchRegistry = Object.freeze({ PATCHES, getPatch, shouldApplyPatch });
+    function evaluateProbe(patch, profile, context) {
+      const probeId = patch.appliesTo?.probe ?? null;
+      if (!probeId) return { matches: true, reason: 'probe-not-required' };
+  
+      const probe = PROBES[probeId];
+      if (!probe) {
+        return {
+          matches: unknownDecision(patch.unknownProbeBehavior),
+          reason: 'probe-unavailable'
+        };
+      }
+  
+      let result = null;
+      try {
+        result = probe.evaluate(profile, context);
+      } catch {
+        result = null;
+      }
+  
+      if (result === true) return { matches: true, reason: `probe:${probeId}:match` };
+      if (result === false) return { matches: false, reason: `probe:${probeId}:no-match` };
+      return {
+        matches: unknownDecision(patch.unknownProbeBehavior),
+        reason: `probe:${probeId}:unknown`
+      };
+    }
+  
+    function evaluatePatch(patch, profile, context = {}) {
+      if (!patch || !profile) {
+        return { patchId: patch?.id ?? null, selected: false, reason: 'profile-missing' };
+      }
+  
+      const platforms = patch.appliesTo?.platforms ?? [];
+      if (platforms.length > 0 && !platforms.includes(profile.platform)) {
+        return { patchId: patch.id, selected: false, reason: 'platform-mismatch' };
+      }
+  
+      const version = matchesVersion(patch, profile.appVersion);
+      if (!version.matches) {
+        return { patchId: patch.id, selected: false, reason: version.reason };
+      }
+  
+      const probe = evaluateProbe(patch, profile, context);
+      if (!probe.matches) {
+        return { patchId: patch.id, selected: false, reason: probe.reason };
+      }
+  
+      return {
+        patchId: patch.id,
+        selected: true,
+        reason: probe.reason === 'probe-not-required' ? version.reason : probe.reason
+      };
+    }
+  
+    function shouldApplyPatch(patch, profile, context = {}) {
+      return evaluatePatch(patch, profile, context).selected;
+    }
+  
+    function selectPatches(profile, context = {}, options = {}) {
+      const phase = options.phase ?? null;
+      const candidates = phase ? PATCHES.filter((patch) => patch.phase === phase) : PATCHES;
+      const decisions = candidates.map((patch) => evaluatePatch(patch, profile, context));
+      const selected = candidates.filter((patch, index) => decisions[index].selected);
+      return { selected, decisions };
+    }
+  
+    OWP.patchRegistry = Object.freeze({
+      PATCHES,
+      PROBES,
+      normalizeBrowserPlatform,
+      getPatch,
+      matchesVersion,
+      evaluatePatch,
+      shouldApplyPatch,
+      selectPatches
+    });
   })(OWP);
   
 
@@ -647,12 +781,18 @@
       scriptVersion: OWP.constants.SCRIPT_VERSION,
       environmentFound: false,
       bootstrapProfile: null,
+      bootstrapSelectedPatchIds: [],
+      bootstrapAppliedPatchIds: [],
       bootstrapPatchApplied: false,
       bootstrapPatchFields: [],
+      bootstrapPatchResults: [],
+      patchDecisions: [],
       discoveryStatus: 'idle',
       lastDiscovery: null,
       reloadRequested: false
     };
+  
+    let selectionContext = null;
   
     function summarizeProfile(profile) {
       return profile ? {
@@ -684,11 +824,56 @@
       if (isDebugEnabled(windowObject)) windowObject.console?.debug?.('[Orca Web Patches]', ...args);
     }
   
-    function wantsLinuxPatch(profile) {
-      return OWP.patchRegistry.shouldApplyPatch(
-        OWP.patchRegistry.getPatch('force-linux-platform'),
-        profile
-      );
+    function createSelectionContext(windowObject) {
+      return Object.freeze({
+        browserPlatform: typeof windowObject?.navigator?.platform === 'string'
+          ? windowObject.navigator.platform
+          : null
+      });
+    }
+  
+    function selectBootstrapPatches(profile) {
+      return OWP.patchRegistry.selectPatches(profile, selectionContext ?? {}, { phase: 'bootstrap' });
+    }
+  
+    function patchIds(selection) {
+      return selection.selected.map((patch) => patch.id);
+    }
+  
+    function samePatchIds(left, right) {
+      if (left.length !== right.length) return false;
+      return left.every((id, index) => id === right[index]);
+    }
+  
+    function applyPatch(windowObject, patch) {
+      if (patch.id === 'force-linux-platform') {
+        return OWP.forceLinuxPlatform.applyForceLinuxPlatform(windowObject.navigator);
+      }
+      return { applied: false, fields: [] };
+    }
+  
+    function applyBootstrapPatches(windowObject, selection) {
+      const appliedPatchIds = [];
+      const fields = [];
+      const results = [];
+  
+      for (const patch of selection.selected) {
+        const result = applyPatch(windowObject, patch);
+        if (result?.applied) appliedPatchIds.push(patch.id);
+        for (const field of result?.fields ?? []) fields.push(field);
+        results.push({
+          patchId: patch.id,
+          applied: result?.applied === true,
+          fields: [...(result?.fields ?? [])]
+        });
+      }
+  
+      state.bootstrapSelectedPatchIds = patchIds(selection);
+      state.bootstrapAppliedPatchIds = appliedPatchIds;
+      state.bootstrapPatchApplied = appliedPatchIds.length > 0;
+      state.bootstrapPatchFields = fields;
+      state.bootstrapPatchResults = results;
+      state.patchDecisions = selection.decisions;
     }
   
     function requestBoundedReload(windowObject, reason) {
@@ -766,14 +951,17 @@
       }
   
       state.discoveryStatus = 'success';
-      const desiredLinuxPatch = wantsLinuxPatch(profile);
-      if (desiredLinuxPatch !== state.bootstrapPatchApplied) {
+      const desiredSelection = selectBootstrapPatches(profile);
+      const desiredPatchIds = patchIds(desiredSelection);
+      state.patchDecisions = desiredSelection.decisions;
+  
+      if (!samePatchIds(desiredPatchIds, state.bootstrapSelectedPatchIds)) {
         const reason = [
           environment.environmentId,
           profile.runtimeId,
           profile.platform,
           profile.appVersion ?? 'unknown',
-          desiredLinuxPatch ? 'linux-on' : 'linux-off'
+          desiredPatchIds.length > 0 ? desiredPatchIds.join(',') : 'no-patches'
         ].join('|');
         requestBoundedReload(windowObject, reason);
         return state.lastDiscovery;
@@ -785,6 +973,8 @@
   
     function start(windowObject = globalThis.window) {
       if (!windowObject?.localStorage) return state;
+      selectionContext = createSelectionContext(windowObject);
+  
       const environment = OWP.runtimeProfile.readCurrentEnvironment(windowObject.localStorage);
       if (!environment) {
         installDebugApi(windowObject);
@@ -797,11 +987,11 @@
         environment
       );
       state.bootstrapProfile = summarizeProfile(profile);
-      if (profile && wantsLinuxPatch(profile)) {
-        const result = OWP.forceLinuxPlatform.applyForceLinuxPlatform(windowObject.navigator);
-        state.bootstrapPatchApplied = result.applied;
-        state.bootstrapPatchFields = result.fields;
-        debug(windowObject, 'bootstrap Linux platform patch:', result);
+  
+      const bootstrapSelection = selectBootstrapPatches(profile);
+      applyBootstrapPatches(windowObject, bootstrapSelection);
+      if (bootstrapSelection.selected.length > 0) {
+        debug(windowObject, 'bootstrap patch selection:', state.patchDecisions);
       }
   
       installDebugApi(windowObject);
@@ -809,7 +999,13 @@
       return state;
     }
   
-    OWP.main = Object.freeze({ start, revalidate: runRevalidation, wantsLinuxPatch, requestBoundedReload });
+    OWP.main = Object.freeze({
+      start,
+      revalidate: runRevalidation,
+      createSelectionContext,
+      selectBootstrapPatches,
+      requestBoundedReload
+    });
     start();
   })(OWP);
   
