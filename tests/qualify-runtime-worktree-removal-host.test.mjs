@@ -7,6 +7,13 @@ const OWP = loadModules([
   'src/patches/qualify-runtime-worktree-removal-host.js'
 ]);
 
+function freshPatchModules() {
+  return loadModules([
+    'src/constants.js',
+    'src/patches/qualify-runtime-worktree-removal-host.js'
+  ]);
+}
+
 function makeWindow(environmentId = 'home-mac') {
   const runtimeCalls = [];
   const removeCalls = [];
@@ -69,8 +76,9 @@ test('strips a runtime-local hostId from runtimeEnvironments worktree.rm exactly
 });
 
 test('rewraps runtime removal APIs after Orca replaces its preload API objects', async () => {
+  const isolated = freshPatchModules();
   const app = makeWindow();
-  OWP.qualifyRuntimeWorktreeRemovalHost.applyQualifyRuntimeWorktreeRemovalHost(app.window);
+  isolated.qualifyRuntimeWorktreeRemovalHost.applyQualifyRuntimeWorktreeRemovalHost(app.window);
   assert.equal(app.intervals.length, 1);
 
   app.window.api.runtimeEnvironments = app.makeRuntimeEnvironments();
@@ -90,7 +98,7 @@ test('rewraps runtime removal APIs after Orca replaces its preload API objects',
   });
 
   assert.equal(app.runtimeCalls.at(-1).params.hostId, undefined);
-  const status = OWP.qualifyRuntimeWorktreeRemovalHost.getStatus();
+  const status = isolated.qualifyRuntimeWorktreeRemovalHost.getStatus();
   assert.equal(status.watcherInstalled, true);
   assert.equal(status.runtimeCallWrapCount >= 2, true);
   assert.equal(status.rewrittenCallCount >= 1, true);
@@ -178,8 +186,9 @@ test('leaves unrelated runtime RPC methods untouched', async () => {
 });
 
 test('reports both supported interception surfaces and the rewrap watcher as installed', () => {
+  const isolated = freshPatchModules();
   const app = makeWindow();
-  const result = OWP.qualifyRuntimeWorktreeRemovalHost.applyQualifyRuntimeWorktreeRemovalHost(app.window);
+  const result = isolated.qualifyRuntimeWorktreeRemovalHost.applyQualifyRuntimeWorktreeRemovalHost(app.window);
   assert.equal(result.applied, true);
   assert.equal(result.fields.includes('runtimeEnvironments.call(worktree.rm.hostId)'), true);
   assert.equal(result.fields.includes('worktrees.remove(hostId)'), true);
@@ -187,7 +196,8 @@ test('reports both supported interception surfaces and the rewrap watcher as ins
 });
 
 test('fails closed when both removal APIs are unavailable', () => {
-  const result = OWP.qualifyRuntimeWorktreeRemovalHost.applyQualifyRuntimeWorktreeRemovalHost({
+  const isolated = freshPatchModules();
+  const result = isolated.qualifyRuntimeWorktreeRemovalHost.applyQualifyRuntimeWorktreeRemovalHost({
     api: {},
     localStorage: memoryStorage()
   });
