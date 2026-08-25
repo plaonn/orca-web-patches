@@ -12,7 +12,7 @@ test('runtime settings bridge selects for confirmed Orca Web runtime versions in
       { browserPlatform: 'Win32' },
       { phase: 'runtime' }
     );
-    assert.deepEqual(selection.selected.map((entry) => entry.id), ['bridge-web-runtime-settings']);
+    assert.equal(selection.selected.map((entry) => entry.id).join(','), 'bridge-web-runtime-settings');
     assert.equal(selection.decisions[0].selected, true);
   }
 });
