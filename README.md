@@ -15,9 +15,27 @@ It adjusts `navigator.platform`, the OS portion of `navigator.userAgent` / `appV
 1. Install Tampermonkey in Edge/Chromium.
 2. Allow userscripts. On Edge, `edge://extensions` → Developer mode satisfies the current Chromium userscript permission requirement.
 3. In Tampermonkey settings, `Content Script API = UserScripts API Dynamic` is recommended. This provides genuine `document-start` execution needed by bootstrap patches.
-4. Install `dist/orca-web-patches.user.js`. Once published on GitHub, opening its raw URL installs it and Tampermonkey can update it from the `@updateURL` / `@downloadURL` metadata.
+4. Install `dist/orca-web-patches.user.js`. Opening its raw GitHub URL installs it and Tampermonkey can update it from the `@updateURL` / `@downloadURL` metadata.
+5. Configure the actual Orca Web URL/port scope locally in Tampermonkey as described below.
 
-The committed metadata runs on `localhost` and `127.0.0.1` over HTTP/HTTPS, with no port assumption. For another Orca Web origin, add that origin under the script's Tampermonkey **User matches**. This is local browser configuration and is not overwritten by repository updates.
+## Local URL/port configuration
+
+The GitHub userscript and each browser's deployment configuration are deliberately separate.
+
+The committed metadata contains broad localhost/loopback matches only as generic installation defaults. For normal use, configure the exact Orca Web origins/ports on each browser in Tampermonkey instead of editing the userscript source:
+
+1. Open **Tampermonkey Dashboard**.
+2. Open **Orca Web Patches**.
+3. Open the script's **Settings** tab.
+4. Under **Includes/Excludes**, disable **Original matches** if you want the local configuration to be authoritative.
+5. Add the exact Orca Web URL/port patterns for that browser under **User includes**. Use one entry per desired origin/port or a regular-expression include when a port family is intentional.
+6. Save the script settings.
+
+For example, a deployment entry can conceptually look like `http://localhost:<your-port>/*`; use the real port in Tampermonkey only, not in this repository.
+
+`User includes`, `User matches`, `User excludes`, and the choice to merge or disable the original metadata are Tampermonkey-local overrides. Updating the userscript from GitHub therefore updates patch code without requiring the deployment URL/port list to be committed or re-edited.
+
+Do not edit the installed userscript source merely to change URL/port scope. Source edits blur the boundary between the versioned patch artifact and per-browser deployment configuration and can interfere with clean update behavior.
 
 The script still no-ops unless Orca Web's own local paired-runtime environment is present.
 
@@ -59,11 +77,13 @@ await window.__orcaWebPatches?.recheck()
 window.__orcaWebPatches?.clearCache()
 ```
 
-`clearCache()` removes only this userscript's runtime profile and reload guard; it does not delete Orca's pairing.
+`clearCache()` removes only this userscript's runtime profile and reload guard; it does not delete Orca's pairing or Tampermonkey's local URL/port configuration.
 
 ## Update behavior
 
-Tampermonkey compares the userscript `@version` and downloads newer releases from the raw GitHub `main` artifact. Every userscript change must increase `package.json` / metadata version and regenerate `dist/orca-web-patches.user.js`.
+Tampermonkey compares the userscript `@version` and downloads newer releases from the raw GitHub `main` artifact. Every userscript code change must increase `package.json` / metadata version and regenerate `dist/orca-web-patches.user.js`.
+
+Per-browser URL/port scope remains in Tampermonkey's local override settings and is not part of the downloaded userscript artifact.
 
 ## Development
 
