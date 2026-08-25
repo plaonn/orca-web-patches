@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Orca Web Patches
 // @namespace    https://github.com/plaonn/orca-web-patches
-// @version      0.1.1
+// @version      0.1.2
 // @description  Version-aware compatibility patches for Orca Web.
 // @license      MIT
 // @homepageURL  https://github.com/plaonn/orca-web-patches
@@ -27,7 +27,7 @@
     'use strict';
   
     OWP.constants = Object.freeze({
-      SCRIPT_VERSION: '0.1.1',
+      SCRIPT_VERSION: '0.1.2',
       ORCA_ENVIRONMENT_STORAGE_KEY: 'orca.web.runtimeEnvironment.v1',
       PROFILE_STORAGE_KEY: 'orca.web.patches.runtimeProfile.v1',
       RELOAD_GUARD_KEY: 'orca.web.patches.reloadGuard.v1',
@@ -361,93 +361,281 @@
   ((OWP) => {
     'use strict';
   
+    const BRIDGE_CHANNEL = 'orca-web-patches.runtime.v1';
+    const BRIDGE_PING_TIMEOUT_MS = 1_500;
+    let bridgeReadyPromise = null;
+  
     function sleep(windowObject, milliseconds) {
       return new Promise((resolve) => windowObject.setTimeout(resolve, milliseconds));
     }
   
-    async function waitForRuntimeApi(windowObject, timeoutMs = OWP.constants.API_WAIT_TIMEOUT_MS) {
+    async function waitForOrcaWebClient(windowObject, timeoutMs = OWP.constants.API_WAIT_TIMEOUT_MS) {
       const startedAt = Date.now();
       while (Date.now() - startedAt <= timeoutMs) {
-        const api = windowObject?.api?.runtimeEnvironments;
-        if (api?.list && api?.getStatus && api?.call) return api;
+        if (windowObject?.__ORCA_WEB_CLIENT__ === true) return true;
         await sleep(windowObject, OWP.constants.API_POLL_INTERVAL_MS);
       }
-      return null;
+      return false;
     }
   
-    function unwrapEnvelope(envelope) {
-      if (!envelope || typeof envelope !== 'object' || envelope.ok !== true) return null;
-      return envelope.result && typeof envelope.result === 'object' ? envelope.result : null;
+    function pageBridgeBootstrap() {
+      'use strict';
+  
+      const CHANNEL = 'orca-web-patches.runtime.v1';
+      const MARKER = '__orcaWebPatchesRuntimeBridgeV1';
+  
+      if (window[MARKER] === true) return;
+      try {
+        Object.defineProperty(window, MARKER, { value: true, configurable: true });
+      } catch {
+        window[MARKER] = true;
+      }
+  
+      function respond(requestId, payload) {
+        window.postMessage({
+          channel: CHANNEL,
+          type: 'response',
+          requestId,
+          payload
+        }, '*');
+      }
+  
+      window.addEventListener('message', async (event) => {
+        if (event.source && event.source !== window) return;
+        const message = event.data;
+        if (!message || message.channel !== CHANNEL || message.type !== 'request') return;
+        if (typeof message.requestId !== 'string' || !message.requestId) return;
+  
+        if (message.action === 'ping') {
+          respond(message.requestId, { ok: true, kind: 'ready' });
+          return;
+        }
+  
+        if (message.action !== 'discover') return;
+        const selector = message.selector;
+        if (typeof selector !== 'string' || !selector) {
+          respond(message.requestId, {
+            ok: false,
+            reason: 'runtime-environment-invalid',
+            stage: 'environment'
+          });
+          return;
+        }
+  
+        const api = window.api?.runtimeEnvironments;
+        if (!api?.getStatus || !api?.call) {
+          respond(message.requestId, {
+            ok: false,
+            reason: 'runtime-api-unavailable',
+            stage: 'api'
+          });
+          return;
+        }
+  
+        let statusEnvelope;
+        try {
+          statusEnvelope = await api.getStatus({
+            selector,
+            timeoutMs: message.timeoutMs
+          });
+        } catch {
+          respond(message.requestId, {
+            ok: false,
+            reason: 'runtime-status-failed',
+            stage: 'status'
+          });
+          return;
+        }
+  
+        const status = statusEnvelope?.ok === true
+          && statusEnvelope.result
+          && typeof statusEnvelope.result === 'object'
+          ? statusEnvelope.result
+          : null;
+        if (!status) {
+          respond(message.requestId, {
+            ok: false,
+            reason: 'runtime-status-rejected',
+            stage: 'status'
+          });
+          return;
+        }
+  
+        const runtimeId = typeof status.runtimeId === 'string' && status.runtimeId
+          ? status.runtimeId
+          : typeof statusEnvelope?._meta?.runtimeId === 'string'
+            ? statusEnvelope._meta.runtimeId
+            : null;
+        if (!runtimeId) {
+          respond(message.requestId, {
+            ok: false,
+            reason: 'runtime-id-missing',
+            stage: 'status'
+          });
+          return;
+        }
+  
+        let platform = typeof status.hostPlatform === 'string' && status.hostPlatform
+          ? status.hostPlatform
+          : null;
+        if (!platform) {
+          let platformEnvelope;
+          try {
+            platformEnvelope = await api.call({
+              selector,
+              method: 'host.platform',
+              timeoutMs: message.timeoutMs
+            });
+          } catch {
+            respond(message.requestId, {
+              ok: false,
+              reason: 'host-platform-call-failed',
+              stage: 'platform'
+            });
+            return;
+          }
+          platform = platformEnvelope?.ok === true
+            ? platformEnvelope.result?.platform
+            : null;
+        }
+  
+        respond(message.requestId, {
+          ok: true,
+          runtimeId,
+          platform,
+          appVersion: typeof status.appVersion === 'string' && status.appVersion.trim()
+            ? status.appVersion.trim()
+            : null
+        });
+      });
+    }
+  
+    function installPageBridge(windowObject) {
+      const documentObject = windowObject?.document;
+      const target = documentObject?.documentElement ?? documentObject?.head ?? documentObject?.body;
+      if (!documentObject?.createElement || !target?.appendChild) return false;
+  
+      const script = documentObject.createElement('script');
+      script.textContent = `(${pageBridgeBootstrap.toString()})();`;
+      try {
+        target.appendChild(script);
+        script.remove?.();
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  
+    function createRequestId() {
+      return `owp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
+  
+    function sendBridgeRequest(windowObject, request, timeoutMs) {
+      return new Promise((resolve) => {
+        const requestId = createRequestId();
+        let settled = false;
+  
+        const finish = (value) => {
+          if (settled) return;
+          settled = true;
+          windowObject.removeEventListener?.('message', onMessage);
+          windowObject.clearTimeout?.(timer);
+          resolve(value);
+        };
+  
+        const onMessage = (event) => {
+          if (event.source && event.source !== windowObject) return;
+          const message = event.data;
+          if (!message || message.channel !== BRIDGE_CHANNEL || message.type !== 'response') return;
+          if (message.requestId !== requestId) return;
+          finish(message.payload);
+        };
+  
+        windowObject.addEventListener?.('message', onMessage);
+        const timer = windowObject.setTimeout(() => {
+          finish({ ok: false, reason: 'runtime-page-bridge-timeout', stage: 'bridge' });
+        }, timeoutMs);
+  
+        try {
+          windowObject.postMessage({
+            channel: BRIDGE_CHANNEL,
+            type: 'request',
+            requestId,
+            ...request
+          }, '*');
+        } catch {
+          finish({ ok: false, reason: 'runtime-page-bridge-post-failed', stage: 'bridge' });
+        }
+      });
+    }
+  
+    async function ensurePageBridge(windowObject) {
+      if (bridgeReadyPromise) return bridgeReadyPromise;
+      bridgeReadyPromise = (async () => {
+        if (!installPageBridge(windowObject)) return false;
+        const ping = await sendBridgeRequest(
+          windowObject,
+          { action: 'ping' },
+          BRIDGE_PING_TIMEOUT_MS
+        );
+        return ping?.ok === true && ping.kind === 'ready';
+      })();
+  
+      const ready = await bridgeReadyPromise;
+      if (!ready) bridgeReadyPromise = null;
+      return ready;
     }
   
     async function discoverRuntime(windowObject, expectedEnvironment) {
-      const api = await waitForRuntimeApi(windowObject);
-      if (!api) return { ok: false, reason: 'runtime-api-unavailable' };
-  
-      let environments;
-      try {
-        environments = await api.list();
-      } catch {
-        return { ok: false, reason: 'runtime-environment-list-failed' };
+      const selector = expectedEnvironment?.environmentId;
+      if (typeof selector !== 'string' || !selector) {
+        return { ok: false, reason: 'runtime-environment-invalid', stage: 'environment' };
       }
-      const environment = Array.isArray(environments)
-        ? environments.find((entry) => entry?.id === expectedEnvironment?.environmentId)
-        : null;
-      if (!environment) return { ok: false, reason: 'runtime-environment-mismatch' };
   
-      let statusEnvelope;
-      try {
-        statusEnvelope = await api.getStatus({
-          selector: environment.id,
+      const ready = await waitForOrcaWebClient(windowObject);
+      if (!ready) return { ok: false, reason: 'runtime-api-unavailable', stage: 'api' };
+  
+      const bridgeReady = await ensurePageBridge(windowObject);
+      if (!bridgeReady) {
+        return { ok: false, reason: 'runtime-page-bridge-unavailable', stage: 'bridge' };
+      }
+  
+      const result = await sendBridgeRequest(
+        windowObject,
+        {
+          action: 'discover',
+          selector,
           timeoutMs: OWP.constants.RUNTIME_CALL_TIMEOUT_MS
-        });
-      } catch {
-        return { ok: false, reason: 'runtime-status-failed' };
-      }
-      const status = unwrapEnvelope(statusEnvelope);
-      if (!status) return { ok: false, reason: 'runtime-status-rejected' };
+        },
+        (OWP.constants.RUNTIME_CALL_TIMEOUT_MS * 2) + 2_000
+      );
   
-      const runtimeId = typeof status.runtimeId === 'string' && status.runtimeId
-        ? status.runtimeId
-        : typeof statusEnvelope?._meta?.runtimeId === 'string'
-          ? statusEnvelope._meta.runtimeId
-          : null;
-      if (!runtimeId) return { ok: false, reason: 'runtime-id-missing' };
+      if (!result?.ok) return result ?? {
+        ok: false,
+        reason: 'runtime-page-bridge-invalid-response',
+        stage: 'bridge'
+      };
   
-      let platform = OWP.runtimeProfile.isValidPlatform(status.hostPlatform)
-        ? status.hostPlatform
-        : null;
-      if (!platform) {
-        let platformEnvelope;
-        try {
-          platformEnvelope = await api.call({
-            selector: environment.id,
-            method: 'host.platform',
-            timeoutMs: OWP.constants.RUNTIME_CALL_TIMEOUT_MS
-          });
-        } catch {
-          return { ok: false, reason: 'host-platform-call-failed' };
-        }
-        const platformResult = unwrapEnvelope(platformEnvelope);
-        platform = platformResult?.platform;
+      if (!OWP.runtimeProfile.isValidPlatform(result.platform)) {
+        return { ok: false, reason: 'host-platform-invalid', stage: 'platform' };
       }
-      if (!OWP.runtimeProfile.isValidPlatform(platform)) {
-        return { ok: false, reason: 'host-platform-invalid' };
-      }
-  
-      const appVersion = typeof status.appVersion === 'string' && status.appVersion.trim()
-        ? status.appVersion.trim()
-        : null;
   
       return {
         ok: true,
-        runtimeId,
-        platform,
-        appVersion
+        runtimeId: result.runtimeId,
+        platform: result.platform,
+        appVersion: result.appVersion,
+        transport: 'page-bridge'
       };
     }
   
-    OWP.runtimeDiscovery = Object.freeze({ waitForRuntimeApi, unwrapEnvelope, discoverRuntime });
+    OWP.runtimeDiscovery = Object.freeze({
+      waitForOrcaWebClient,
+      installPageBridge,
+      sendBridgeRequest,
+      ensurePageBridge,
+      discoverRuntime
+    });
   })(OWP);
   
 
@@ -461,6 +649,7 @@
       bootstrapProfile: null,
       bootstrapPatchApplied: false,
       bootstrapPatchFields: [],
+      discoveryStatus: 'idle',
       lastDiscovery: null,
       reloadRequested: false
     };
@@ -478,7 +667,8 @@
       return {
         ok: true,
         platform: discovered.platform,
-        appVersion: discovered.appVersion
+        appVersion: discovered.appVersion,
+        transport: discovered.transport ?? null
       };
     }
   
@@ -518,7 +708,7 @@
     function installDebugApi(windowObject) {
       const api = Object.freeze({
         getStatus: () => JSON.parse(JSON.stringify(state)),
-        recheck: () => revalidate(windowObject),
+        recheck: () => runRevalidation(windowObject),
         clearCache: () => {
           OWP.runtimeProfile.clearProfile(windowObject.localStorage);
           clearReloadGuard(windowObject);
@@ -535,15 +725,29 @@
       }
     }
   
-    async function revalidate(windowObject) {
+    async function runRevalidation(windowObject) {
       const environment = OWP.runtimeProfile.readCurrentEnvironment(windowObject.localStorage);
       if (!environment) {
-        state.lastDiscovery = { ok: false, reason: 'orca-environment-not-found' };
+        state.discoveryStatus = 'error';
+        state.lastDiscovery = { ok: false, reason: 'orca-environment-not-found', stage: 'environment' };
         return state.lastDiscovery;
       }
-      const discovered = await OWP.runtimeDiscovery.discoverRuntime(windowObject, environment);
+  
+      state.discoveryStatus = 'pending';
+      state.lastDiscovery = { ok: false, reason: 'runtime-discovery-pending', stage: 'discovery' };
+  
+      let discovered;
+      try {
+        discovered = await OWP.runtimeDiscovery.discoverRuntime(windowObject, environment);
+      } catch {
+        state.discoveryStatus = 'error';
+        state.lastDiscovery = { ok: false, reason: 'runtime-discovery-threw', stage: 'discovery' };
+        return state.lastDiscovery;
+      }
+  
       state.lastDiscovery = summarizeDiscovery(discovered);
       if (!discovered.ok) {
+        state.discoveryStatus = 'error';
         debug(windowObject, 'runtime revalidation skipped:', discovered.reason);
         return state.lastDiscovery;
       }
@@ -556,9 +760,12 @@
           discovered
         );
       } catch {
-        state.lastDiscovery = { ok: false, reason: 'runtime-profile-cache-write-failed' };
+        state.discoveryStatus = 'error';
+        state.lastDiscovery = { ok: false, reason: 'runtime-profile-cache-write-failed', stage: 'cache' };
         return state.lastDiscovery;
       }
+  
+      state.discoveryStatus = 'success';
       const desiredLinuxPatch = wantsLinuxPatch(profile);
       if (desiredLinuxPatch !== state.bootstrapPatchApplied) {
         const reason = [
@@ -598,11 +805,11 @@
       }
   
       installDebugApi(windowObject);
-      void revalidate(windowObject);
+      void runRevalidation(windowObject);
       return state;
     }
   
-    OWP.main = Object.freeze({ start, revalidate, wantsLinuxPatch, requestBoundedReload });
+    OWP.main = Object.freeze({ start, revalidate: runRevalidation, wantsLinuxPatch, requestBoundedReload });
     start();
   })(OWP);
   
