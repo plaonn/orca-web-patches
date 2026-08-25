@@ -9,10 +9,48 @@
     const startedAt = Date.now();
     while (Date.now() - startedAt <= timeoutMs) {
       const api = windowObject?.api?.runtimeEnvironments;
-      if (api?.getStatus && api?.call) return api;
+      if (windowObject?.__ORCA_WEB_CLIENT__ === true && api?.getStatus && api?.call) return api;
       await sleep(windowObject, OWP.constants.API_POLL_INTERVAL_MS);
     }
     return null;
+  }
+
+  function createTimeoutError(stage) {
+    const error = new Error(`${stage}-timeout`);
+    error.code = 'OWP_RUNTIME_CALL_TIMEOUT';
+    return error;
+  }
+
+  function withTimeout(windowObject, operation, timeoutMs, stage) {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const timer = windowObject.setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        reject(createTimeoutError(stage));
+      }, timeoutMs);
+
+      Promise.resolve()
+        .then(operation)
+        .then(
+          (value) => {
+            if (settled) return;
+            settled = true;
+            windowObject.clearTimeout?.(timer);
+            resolve(value);
+          },
+          (error) => {
+            if (settled) return;
+            settled = true;
+            windowObject.clearTimeout?.(timer);
+            reject(error);
+          }
+        );
+    });
+  }
+
+  function isTimeoutError(error) {
+    return error?.code === 'OWP_RUNTIME_CALL_TIMEOUT';
   }
 
   function unwrapEnvelope(envelope) {
@@ -29,18 +67,23 @@
     const api = await waitForRuntimeApi(windowObject);
     if (!api) return { ok: false, reason: 'runtime-api-unavailable', stage: 'api' };
 
-    // The persisted environment identity is already the authority for which paired
-    // runtime to query. Avoid runtimeEnvironments.list(): in paired browser clients
-    // that public listing is unnecessary for identity verification and may cross a
-    // userscript/page-world async boundary that never settles.
     let statusEnvelope;
     try {
-      statusEnvelope = await api.getStatus({
-        selector,
-        timeoutMs: OWP.constants.RUNTIME_CALL_TIMEOUT_MS
-      });
-    } catch {
-      return { ok: false, reason: 'runtime-status-failed', stage: 'status' };
+      statusEnvelope = await withTimeout(
+        windowObject,
+        () => api.getStatus({
+          selector,
+          timeoutMs: OWP.constants.RUNTIME_CALL_TIMEOUT_MS
+        }),
+        OWP.constants.RUNTIME_CALL_TIMEOUT_MS + 1_000,
+        'runtime-status'
+      );
+    } catch (error) {
+      return {
+        ok: false,
+        reason: isTimeoutError(error) ? 'runtime-status-timeout' : 'runtime-status-failed',
+        stage: 'status'
+      };
     }
     const status = unwrapEnvelope(statusEnvelope);
     if (!status) return { ok: false, reason: 'runtime-status-rejected', stage: 'status' };
@@ -58,13 +101,22 @@
     if (!platform) {
       let platformEnvelope;
       try {
-        platformEnvelope = await api.call({
-          selector,
-          method: 'host.platform',
-          timeoutMs: OWP.constants.RUNTIME_CALL_TIMEOUT_MS
-        });
-      } catch {
-        return { ok: false, reason: 'host-platform-call-failed', stage: 'platform' };
+        platformEnvelope = await withTimeout(
+          windowObject,
+          () => api.call({
+            selector,
+            method: 'host.platform',
+            timeoutMs: OWP.constants.RUNTIME_CALL_TIMEOUT_MS
+          }),
+          OWP.constants.RUNTIME_CALL_TIMEOUT_MS + 1_000,
+          'host-platform'
+        );
+      } catch (error) {
+        return {
+          ok: false,
+          reason: isTimeoutError(error) ? 'host-platform-timeout' : 'host-platform-call-failed',
+          stage: 'platform'
+        };
       }
       const platformResult = unwrapEnvelope(platformEnvelope);
       platform = platformResult?.platform;
@@ -85,5 +137,10 @@
     };
   }
 
-  OWP.runtimeDiscovery = Object.freeze({ waitForRuntimeApi, unwrapEnvelope, discoverRuntime });
+  OWP.runtimeDiscovery = Object.freeze({
+    waitForRuntimeApi,
+    withTimeout,
+    unwrapEnvelope,
+    discoverRuntime
+  });
 })(globalThis.__OWP__);
