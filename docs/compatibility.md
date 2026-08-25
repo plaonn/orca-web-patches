@@ -34,6 +34,8 @@ Until a fixed release is directly established, the patch remains version-conserv
 
 For page-visible Chromium identity, the current targets use `Linux x86_64` / UA-CH `Linux` for Linux runtimes and `MacIntel` / the reduced macOS UA tuple / UA-CH `macOS` for macOS runtimes. Browser identity/version tokens such as Edge remain unchanged. High-entropy `platformVersion` is normalized rather than guessed from the remote host version.
 
+CPU architecture is intentionally not aligned yet. Orca `1.4.188` exposes `host.platform` but no corresponding authoritative `host.arch` RPC, and `status.get` / remote-updater status do not include runtime architecture. Current upstream `main` still exposes `host.platform` without a `host.arch` equivalent. Therefore the patch does not infer `arm64` from `darwin` or otherwise guess the remote CPU. High-entropy UA-CH fields such as `architecture` and `bitness` may remain browser-derived until Orca exposes an authoritative runtime architecture signal.
+
 Additional runtime targets may be added to the generic implementation only when their browser identity can be represented correctly and the corresponding affected browser/runtime combination has evidence. Do not infer support merely because the patch abstraction is generic.
 
 ## Evidence vs application policy
