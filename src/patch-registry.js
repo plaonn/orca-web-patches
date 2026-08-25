@@ -66,6 +66,28 @@
         fixedIn: null
       }),
       rationale: 'Forward runtime-supported settings that Orca Web persists locally but omits from settings.update when paired to a runtime.'
+    }),
+    Object.freeze({
+      id: 'qualify-runtime-worktree-removal-host',
+      phase: 'runtime',
+      appliesTo: Object.freeze({
+        runtimePlatforms: Object.freeze([]),
+        browserPlatforms: Object.freeze([]),
+        versionRange: null,
+        probe: null
+      }),
+      unknownVersionBehavior: 'skip',
+      unknownProbeBehavior: 'skip',
+      applyUntilFixed: true,
+      evidence: Object.freeze({
+        confirmedAffected: Object.freeze(['1.4.188']),
+        confirmedAffectedContexts: Object.freeze([
+          Object.freeze({ client: 'web', runtime: 'paired', operation: 'worktree.rm' })
+        ]),
+        upstreamSourceObservedAt: '32df073e445ccc4e294be6cc71668f5aaa00ceec',
+        fixedIn: null
+      }),
+      rationale: 'Backport upstream paired-runtime worktree removal host qualification so a runtime-local host id is not sent back to the same runtime as a foreign host selector.'
     })
   ]);
 
