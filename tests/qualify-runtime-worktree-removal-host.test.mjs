@@ -1,21 +1,38 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadModules } from './helpers.mjs';
+import { loadModules, memoryStorage } from './helpers.mjs';
 
-const OWP = loadModules(['src/patches/qualify-runtime-worktree-removal-host.js']);
+const OWP = loadModules([
+  'src/constants.js',
+  'src/patches/qualify-runtime-worktree-removal-host.js'
+]);
 
-function makeWindow() {
-  const calls = [];
+function makeWindow(environmentId = 'home-mac') {
+  const runtimeCalls = [];
+  const removeCalls = [];
   const runtimeEnvironments = {
     call: async (request) => {
-      calls.push(request);
+      runtimeCalls.push(request);
       return { ok: true, result: { removed: true } };
     }
   };
-  return { window: { api: { runtimeEnvironments } }, calls };
+  const worktrees = {
+    remove: async (args) => {
+      removeCalls.push(args);
+      return { removed: true };
+    }
+  };
+  const localStorage = memoryStorage({
+    'orca.web.runtimeEnvironment.v1': JSON.stringify({ id: environmentId })
+  });
+  return {
+    window: { api: { runtimeEnvironments, worktrees }, localStorage },
+    runtimeCalls,
+    removeCalls
+  };
 }
 
-test('strips a runtime-local hostId from paired worktree.rm exactly like current upstream', async () => {
+test('strips a runtime-local hostId from runtimeEnvironments worktree.rm exactly like current upstream', async () => {
   const app = makeWindow();
   const result = OWP.qualifyRuntimeWorktreeRemovalHost.applyQualifyRuntimeWorktreeRemovalHost(app.window);
   assert.equal(result.applied, true);
@@ -30,18 +47,37 @@ test('strips a runtime-local hostId from paired worktree.rm exactly like current
     }
   });
 
-  assert.equal(app.calls.length, 1);
-  assert.equal(app.calls[0].params.hostId, undefined);
-  assert.equal(app.calls[0].params.worktree, 'id:repo::/tmp/worktree');
-  assert.equal(app.calls[0].params.force, false);
+  assert.equal(app.runtimeCalls.length, 1);
+  assert.equal(app.runtimeCalls[0].params.hostId, undefined);
+  assert.equal(app.runtimeCalls[0].params.worktree, 'id:repo::/tmp/worktree');
+  assert.equal(app.runtimeCalls[0].params.force, false);
+});
+
+test('strips the paired runtime hostId from the 1.4.188 web worktrees.remove bypass route', async () => {
+  const app = makeWindow();
+  OWP.qualifyRuntimeWorktreeRemovalHost.applyQualifyRuntimeWorktreeRemovalHost(app.window);
+
+  await app.window.api.worktrees.remove({
+    worktreeId: 'repo::/tmp/worktree',
+    hostId: 'runtime:home-mac',
+    force: false,
+    skipArchive: false
+  });
+
+  assert.equal(app.removeCalls.length, 1);
+  assert.equal(app.removeCalls[0].hostId, undefined);
+  assert.equal(app.removeCalls[0].worktreeId, 'repo::/tmp/worktree');
+  assert.equal(app.removeCalls[0].force, false);
   const status = OWP.qualifyRuntimeWorktreeRemovalHost.getStatus();
-  assert.equal(status.rewrittenCallCount, 1);
+  assert.equal(status.observedWorktreesRemoveCount >= 1, true);
+  assert.equal(status.rewrittenWorktreesRemoveCount >= 1, true);
   assert.equal(status.lastRewrittenSelector, 'home-mac');
   assert.equal(status.lastRewrittenHostId, 'runtime:home-mac');
+  assert.equal(status.lastRewriteSurface, 'worktrees.remove');
 });
 
 test('decodes runtime host ids before comparing them with the runtime selector', async () => {
-  const app = makeWindow();
+  const app = makeWindow('home mac');
   OWP.qualifyRuntimeWorktreeRemovalHost.applyQualifyRuntimeWorktreeRemovalHost(app.window);
 
   await app.window.api.runtimeEnvironments.call({
@@ -52,11 +88,16 @@ test('decodes runtime host ids before comparing them with the runtime selector',
       hostId: 'runtime:home%20mac'
     }
   });
+  await app.window.api.worktrees.remove({
+    worktreeId: 'repo::/tmp/worktree',
+    hostId: 'runtime:home%20mac'
+  });
 
-  assert.equal(app.calls[0].params.hostId, undefined);
+  assert.equal(app.runtimeCalls[0].params.hostId, undefined);
+  assert.equal(app.removeCalls[0].hostId, undefined);
 });
 
-test('preserves SSH and other-runtime host qualification', async () => {
+test('preserves SSH and other-runtime host qualification on both surfaces', async () => {
   const app = makeWindow();
   OWP.qualifyRuntimeWorktreeRemovalHost.applyQualifyRuntimeWorktreeRemovalHost(app.window);
 
@@ -70,9 +111,13 @@ test('preserves SSH and other-runtime host qualification', async () => {
     method: 'worktree.rm',
     params: { worktree: 'id:b', hostId: 'runtime:other-runtime' }
   });
+  await app.window.api.worktrees.remove({ worktreeId: 'a', hostId: 'ssh:server-a' });
+  await app.window.api.worktrees.remove({ worktreeId: 'b', hostId: 'runtime:other-runtime' });
 
-  assert.equal(app.calls[0].params.hostId, 'ssh:server-a');
-  assert.equal(app.calls[1].params.hostId, 'runtime:other-runtime');
+  assert.equal(app.runtimeCalls[0].params.hostId, 'ssh:server-a');
+  assert.equal(app.runtimeCalls[1].params.hostId, 'runtime:other-runtime');
+  assert.equal(app.removeCalls[0].hostId, 'ssh:server-a');
+  assert.equal(app.removeCalls[1].hostId, 'runtime:other-runtime');
 });
 
 test('leaves unrelated runtime RPC methods untouched', async () => {
@@ -85,11 +130,23 @@ test('leaves unrelated runtime RPC methods untouched', async () => {
     params: { worktree: 'id:a', hostId: 'runtime:home-mac' }
   });
 
-  assert.equal(app.calls[0].params.hostId, 'runtime:home-mac');
+  assert.equal(app.runtimeCalls[0].params.hostId, 'runtime:home-mac');
 });
 
-test('fails closed when the runtime call API is unavailable', () => {
-  const result = OWP.qualifyRuntimeWorktreeRemovalHost.applyQualifyRuntimeWorktreeRemovalHost({ api: {} });
+test('reports both supported interception surfaces as installed', () => {
+  const app = makeWindow();
+  const result = OWP.qualifyRuntimeWorktreeRemovalHost.applyQualifyRuntimeWorktreeRemovalHost(app.window);
+  assert.equal(result.applied, true);
+  assert.equal(result.fields.includes('runtimeEnvironments.call(worktree.rm.hostId)'), true);
+  assert.equal(result.fields.includes('worktrees.remove(hostId)'), true);
+});
+
+test('fails closed when both removal APIs are unavailable', () => {
+  const result = OWP.qualifyRuntimeWorktreeRemovalHost.applyQualifyRuntimeWorktreeRemovalHost({
+    api: {},
+    localStorage: memoryStorage()
+  });
   assert.equal(result.applied, false);
-  assert.equal(result.reason, 'runtime-call-api-unavailable');
+  assert.match(result.reason, /runtime-call-api-unavailable/);
+  assert.match(result.reason, /worktrees-remove-api-unavailable/);
 });
