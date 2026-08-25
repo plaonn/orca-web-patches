@@ -97,6 +97,10 @@ This runs the deterministic tests, rebuilds the userscript, syntax-checks the ge
 
 See [docs/compatibility.md](docs/compatibility.md) for version evidence and patch retirement policy.
 
+## License
+
+MIT. See [LICENSE](LICENSE).
+
 ## Rollback
 
 Disable or uninstall the Tampermonkey script. No Orca runtime, repository, server configuration, or network headers are modified.
