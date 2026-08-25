@@ -7,7 +7,8 @@ import { root, memoryStorage, installSyntheticBridgeTransport } from './helpers.
 
 const modules = [
   'src/constants.js', 'src/version.js', 'src/runtime-profile.js', 'src/patch-registry.js',
-  'src/patches/align-browser-platform-to-runtime.js', 'src/runtime-discovery.js', 'src/main.js'
+  'src/patches/align-browser-platform-to-runtime.js', 'src/patches/bridge-web-runtime-settings.js',
+  'src/runtime-discovery.js', 'src/main.js'
 ];
 
 function loadApp({ profile, discovered, browserPlatform = 'Win32' }) {
@@ -70,6 +71,9 @@ test('fresh verified Linux profile automatically selects and applies the generic
   assert.deepEqual(status.bootstrapAppliedPatchIds, ['align-browser-platform-to-runtime']);
   assert.equal(status.bootstrapPatchResults[0].reason, 'aligned');
   assert.equal(status.patchDecisions[0].selected, true);
+  assert.deepEqual(status.runtimeSelectedPatchIds, ['bridge-web-runtime-settings']);
+  assert.deepEqual(status.runtimeAppliedPatchIds, []);
+  assert.equal(status.runtimePatchResults[0].reason, 'settings-api-unavailable');
 });
 
 test('fresh verified macOS profile automatically selects and applies the generic alignment patch', async () => {
@@ -89,6 +93,7 @@ test('fresh verified macOS profile automatically selects and applies the generic
   assert.deepEqual(status.bootstrapAppliedPatchIds, ['align-browser-platform-to-runtime']);
   assert.equal(status.bootstrapPatchResults[0].reason, 'aligned');
   assert.equal(status.patchDecisions[0].selected, true);
+  assert.deepEqual(status.runtimeSelectedPatchIds, ['bridge-web-runtime-settings']);
 });
 
 test('matching Linux browser/runtime skips an unnecessary alignment patch', async () => {
@@ -109,6 +114,7 @@ test('matching Linux browser/runtime skips an unnecessary alignment patch', asyn
   assert.deepEqual(status.bootstrapSelectedPatchIds, []);
   assert.equal(status.bootstrapPatchApplied, false);
   assert.equal(status.patchDecisions[0].reason, 'browser-platform-mismatch');
+  assert.deepEqual(status.runtimeSelectedPatchIds, ['bridge-web-runtime-settings']);
 });
 
 test('matching macOS browser/runtime skips an unnecessary alignment patch', async () => {
@@ -129,6 +135,7 @@ test('matching macOS browser/runtime skips an unnecessary alignment patch', asyn
   assert.deepEqual(status.bootstrapSelectedPatchIds, []);
   assert.equal(status.bootstrapPatchApplied, false);
   assert.equal(status.patchDecisions[0].reason, 'browser-platform-mismatch');
+  assert.deepEqual(status.runtimeSelectedPatchIds, ['bridge-web-runtime-settings']);
 });
 
 test('unknown first load does not mutate browser identity and requests one reload after macOS selection', async () => {
