@@ -17,6 +17,8 @@ Never commit user-specific endpoints, port lists, runtime IDs, browser-profile d
 - Backend/runtime platform is authoritative. Browser OS or URL shape is not evidence of backend platform.
 - Bootstrap patches may use only a fresh, identity-bound local cache. Unknown, stale, malformed, or conflicting state fails closed.
 - Runtime discovery should use existing Orca Web APIs before inventing a private transport.
+- Prefer independently authored interoperability/patch code based on observed behavior and runtime/Web contracts. Do not copy upstream Orca implementation into this repository merely for convenience.
+- If a future patch genuinely requires copying copyrighted upstream code, review license compatibility first and preserve all notices required by the upstream license.
 - Record confirmed affected versions separately from conservative apply-until-fixed policy.
 - Do not mark a patch fixed or retired without direct upstream/release evidence.
 - Keep patches independently testable and avoid unrelated browser/network mutation.
