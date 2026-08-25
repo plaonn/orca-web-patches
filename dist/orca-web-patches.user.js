@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Orca Web Patches
 // @namespace    https://github.com/plaonn/orca-web-patches
-// @version      0.2.0
+// @version      0.2.1
 // @description  Version-aware compatibility patches for Orca Web.
 // @license      MIT
 // @homepageURL  https://github.com/plaonn/orca-web-patches
@@ -27,7 +27,7 @@
     'use strict';
   
     OWP.constants = Object.freeze({
-      SCRIPT_VERSION: '0.2.0',
+      SCRIPT_VERSION: '0.2.1',
       ORCA_ENVIRONMENT_STORAGE_KEY: 'orca.web.runtimeEnvironment.v1',
       PROFILE_STORAGE_KEY: 'orca.web.patches.runtimeProfile.v1',
       RELOAD_GUARD_KEY: 'orca.web.patches.reloadGuard.v1',
@@ -246,7 +246,7 @@
         id: 'align-browser-platform-to-runtime',
         phase: 'bootstrap',
         appliesTo: Object.freeze({
-          runtimePlatforms: Object.freeze(['linux']),
+          runtimePlatforms: Object.freeze(['linux', 'darwin']),
           browserPlatforms: Object.freeze(['win32']),
           versionRange: null,
           probe: 'browser-runtime-platform-mismatch'
@@ -257,7 +257,8 @@
         evidence: Object.freeze({
           confirmedAffected: Object.freeze(['1.4.188']),
           confirmedAffectedContexts: Object.freeze([
-            Object.freeze({ browserPlatform: 'win32', runtimePlatform: 'linux' })
+            Object.freeze({ browserPlatform: 'win32', runtimePlatform: 'linux' }),
+            Object.freeze({ browserPlatform: 'win32', runtimePlatform: 'darwin' })
           ]),
           upstreamSourceObservedAt: 'cc4801320a75f2fd87f67454e13dae7a63117097',
           fixedIn: null
@@ -422,6 +423,12 @@
         navigatorPlatform: 'Linux x86_64',
         userAgentPlatform: 'X11; Linux x86_64',
         userAgentDataPlatform: 'Linux',
+        platformVersion: '0.0.0'
+      }),
+      darwin: Object.freeze({
+        navigatorPlatform: 'MacIntel',
+        userAgentPlatform: 'Macintosh; Intel Mac OS X 10_15_7',
+        userAgentDataPlatform: 'macOS',
         platformVersion: '0.0.0'
       })
     });

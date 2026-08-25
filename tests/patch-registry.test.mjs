@@ -9,22 +9,24 @@ const windowsBrowser = { browserPlatform: 'Win32' };
 const linuxBrowser = { browserPlatform: 'Linux x86_64' };
 const macBrowser = { browserPlatform: 'MacIntel' };
 
-test('verified affected browser/runtime pair applies conservatively until an upstream fixed version is known', () => {
-  assert.equal(OWP.patchRegistry.shouldApplyPatch(
-    patch,
-    { platform: 'linux', appVersion: '1.4.188' },
-    windowsBrowser
-  ), true);
-  assert.equal(OWP.patchRegistry.shouldApplyPatch(
-    patch,
-    { platform: 'linux', appVersion: '9.9.9' },
-    windowsBrowser
-  ), true);
-  assert.equal(OWP.patchRegistry.shouldApplyPatch(
-    patch,
-    { platform: 'linux', appVersion: null },
-    windowsBrowser
-  ), true);
+test('verified affected browser/runtime pairs apply conservatively until an upstream fixed version is known', () => {
+  for (const runtimePlatform of ['linux', 'darwin']) {
+    assert.equal(OWP.patchRegistry.shouldApplyPatch(
+      patch,
+      { platform: runtimePlatform, appVersion: '1.4.188' },
+      windowsBrowser
+    ), true);
+    assert.equal(OWP.patchRegistry.shouldApplyPatch(
+      patch,
+      { platform: runtimePlatform, appVersion: '9.9.9' },
+      windowsBrowser
+    ), true);
+    assert.equal(OWP.patchRegistry.shouldApplyPatch(
+      patch,
+      { platform: runtimePlatform, appVersion: null },
+      windowsBrowser
+    ), true);
+  }
 });
 
 test('runtime and browser platform evidence both constrain automatic selection', () => {
@@ -52,24 +54,31 @@ test('runtime and browser platform evidence both constrain automatic selection',
 
   assert.equal(OWP.patchRegistry.shouldApplyPatch(
     patch,
-    { platform: 'linux', appVersion: '1.4.188' },
+    { platform: 'darwin', appVersion: '1.4.188' },
     macBrowser
   ), false);
-
-  const decision = OWP.patchRegistry.evaluatePatch(
+  assert.equal(OWP.patchRegistry.evaluatePatch(
     patch,
-    { platform: 'linux', appVersion: '1.4.188' },
-    windowsBrowser
-  );
-  assert.equal(decision.patchId, 'align-browser-platform-to-runtime');
-  assert.equal(decision.selected, true);
-  assert.equal(decision.reason, 'probe:browser-runtime-platform-mismatch:match');
+    { platform: 'darwin', appVersion: '1.4.188' },
+    macBrowser
+  ).reason, 'browser-platform-mismatch');
+
+  for (const runtimePlatform of ['linux', 'darwin']) {
+    const decision = OWP.patchRegistry.evaluatePatch(
+      patch,
+      { platform: runtimePlatform, appVersion: '1.4.188' },
+      windowsBrowser
+    );
+    assert.equal(decision.patchId, 'align-browser-platform-to-runtime');
+    assert.equal(decision.selected, true);
+    assert.equal(decision.reason, 'probe:browser-runtime-platform-mismatch:match');
+  }
 });
 
 test('unknown browser platform fails closed when the affected browser family is evidence-bound', () => {
   const decision = OWP.patchRegistry.evaluatePatch(
     patch,
-    { platform: 'linux', appVersion: '1.4.188' },
+    { platform: 'darwin', appVersion: '1.4.188' },
     {}
   );
   assert.equal(decision.selected, false);
@@ -90,32 +99,32 @@ test('explicit semver ranges select only versions inside their boundaries', () =
 
   assert.equal(OWP.patchRegistry.shouldApplyPatch(ranged, { platform: 'linux', appVersion: '1.4.179' }, windowsBrowser), false);
   assert.equal(OWP.patchRegistry.shouldApplyPatch(ranged, { platform: 'linux', appVersion: '1.4.180' }, windowsBrowser), true);
-  assert.equal(OWP.patchRegistry.shouldApplyPatch(ranged, { platform: 'linux', appVersion: '1.4.999' }, windowsBrowser), true);
-  assert.equal(OWP.patchRegistry.shouldApplyPatch(ranged, { platform: 'linux', appVersion: '1.5.0' }, windowsBrowser), false);
+  assert.equal(OWP.patchRegistry.shouldApplyPatch(ranged, { platform: 'darwin', appVersion: '1.4.999' }, windowsBrowser), true);
+  assert.equal(OWP.patchRegistry.shouldApplyPatch(ranged, { platform: 'darwin', appVersion: '1.5.0' }, windowsBrowser), false);
 });
 
 test('fixedIn retires valid versions at or above the fix without misclassifying malformed versions', () => {
   const withFix = { ...patch, evidence: { ...patch.evidence, fixedIn: '1.5.0' } };
   assert.equal(OWP.patchRegistry.shouldApplyPatch(
     withFix,
-    { platform: 'linux', appVersion: '1.4.999' },
+    { platform: 'darwin', appVersion: '1.4.999' },
     windowsBrowser
   ), true);
   assert.equal(OWP.patchRegistry.shouldApplyPatch(
     withFix,
-    { platform: 'linux', appVersion: '1.5.0' },
+    { platform: 'darwin', appVersion: '1.5.0' },
     windowsBrowser
   ), false);
   assert.equal(OWP.patchRegistry.shouldApplyPatch(
     withFix,
-    { platform: 'linux', appVersion: 'malformed' },
+    { platform: 'darwin', appVersion: 'malformed' },
     windowsBrowser
   ), true);
 });
 
 test('selectPatches returns generic patch identity and explainable decisions for a phase', () => {
   const selection = OWP.patchRegistry.selectPatches(
-    { platform: 'linux', appVersion: '1.4.188' },
+    { platform: 'darwin', appVersion: '1.4.188' },
     windowsBrowser,
     { phase: 'bootstrap' }
   );

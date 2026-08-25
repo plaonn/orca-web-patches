@@ -7,6 +7,12 @@
       userAgentPlatform: 'X11; Linux x86_64',
       userAgentDataPlatform: 'Linux',
       platformVersion: '0.0.0'
+    }),
+    darwin: Object.freeze({
+      navigatorPlatform: 'MacIntel',
+      userAgentPlatform: 'Macintosh; Intel Mac OS X 10_15_7',
+      userAgentDataPlatform: 'macOS',
+      platformVersion: '0.0.0'
     })
   });
 
