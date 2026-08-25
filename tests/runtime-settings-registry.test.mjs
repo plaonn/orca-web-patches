@@ -3,12 +3,16 @@ import assert from 'node:assert/strict';
 import { loadModules } from './helpers.mjs';
 
 const OWP = loadModules(['src/version.js', 'src/patch-registry.js']);
-const settingsPatch = OWP.patchRegistry.getPatch('bridge-web-runtime-settings');
-const removalPatch = OWP.patchRegistry.getPatch('qualify-runtime-worktree-removal-host');
+const runtimePatches = [
+  OWP.patchRegistry.getPatch('bridge-web-runtime-settings'),
+  OWP.patchRegistry.getPatch('qualify-runtime-worktree-removal-host'),
+  OWP.patchRegistry.getPatch('fill-web-project-groups-api')
+];
 
 const expectedRuntimePatchIds = [
   'bridge-web-runtime-settings',
-  'qualify-runtime-worktree-removal-host'
+  'qualify-runtime-worktree-removal-host',
+  'fill-web-project-groups-api'
 ].join(',');
 
 test('runtime compatibility patches select for confirmed Orca Web runtime versions independent of OS pair', () => {
@@ -24,7 +28,7 @@ test('runtime compatibility patches select for confirmed Orca Web runtime versio
 });
 
 test('runtime patches remain active for valid versions until an upstream fixed release boundary is known', () => {
-  for (const patch of [settingsPatch, removalPatch]) {
+  for (const patch of runtimePatches) {
     assert.equal(
       OWP.patchRegistry.shouldApplyPatch(
         patch,
@@ -37,7 +41,7 @@ test('runtime patches remain active for valid versions until an upstream fixed r
 });
 
 test('runtime patches fail closed when the Orca version is unknown', () => {
-  for (const patch of [settingsPatch, removalPatch]) {
+  for (const patch of runtimePatches) {
     const decision = OWP.patchRegistry.evaluatePatch(
       patch,
       { platform: 'linux', appVersion: null },
