@@ -8,7 +8,13 @@ import { root, memoryStorage, installSyntheticBridgeTransport } from './helpers.
 const modules = [
   'src/constants.js', 'src/version.js', 'src/runtime-profile.js', 'src/patch-registry.js',
   'src/patches/align-browser-platform-to-runtime.js', 'src/patches/bridge-web-runtime-settings.js',
+  'src/patches/qualify-runtime-worktree-removal-host.js',
   'src/runtime-discovery.js', 'src/main.js'
+];
+
+const expectedRuntimePatchIds = [
+  'bridge-web-runtime-settings',
+  'qualify-runtime-worktree-removal-host'
 ];
 
 function loadApp({ profile, discovered, browserPlatform = 'Win32' }) {
@@ -37,10 +43,22 @@ function loadApp({ profile, discovered, browserPlatform = 'Win32' }) {
         ? '5.0 (Macintosh; Intel Mac OS X 10_15_7)'
         : '5.0 (X11; Linux x86_64)'
   });
+  const runtimeCalls = [];
   const window = {
     localStorage, sessionStorage, navigator,
     location: { search: '', reload: () => { reloads += 1; } },
-    console
+    console,
+    api: {
+      settings: {
+        set: async (updates) => updates
+      },
+      runtimeEnvironments: {
+        call: async (request) => {
+          runtimeCalls.push(request);
+          return { ok: true, result: {} };
+        }
+      }
+    }
   };
   installSyntheticBridgeTransport(window, {
     ok: true,
@@ -52,7 +70,14 @@ function loadApp({ profile, discovered, browserPlatform = 'Win32' }) {
   context.globalThis = context;
   context.__OWP__ = {};
   for (const relative of modules) vm.runInContext(fs.readFileSync(path.join(root, relative), 'utf8'), context, { filename: relative });
-  return { context, window, navigator, localStorage, sessionStorage, getReloads: () => reloads };
+  return { context, window, navigator, localStorage, sessionStorage, runtimeCalls, getReloads: () => reloads };
+}
+
+function assertRuntimePatchesInstalled(status) {
+  assert.deepEqual(JSON.parse(JSON.stringify(status.runtimeSelectedPatchIds)), expectedRuntimePatchIds);
+  assert.deepEqual(JSON.parse(JSON.stringify(status.runtimeAppliedPatchIds)), expectedRuntimePatchIds);
+  assert.equal(status.runtimeSettingsBridge.storageObserverInstalled, true);
+  assert.equal(status.worktreeRemovalHostQualification.installed, true);
 }
 
 test('fresh verified Linux profile automatically selects and applies the generic alignment patch', async () => {
@@ -71,10 +96,7 @@ test('fresh verified Linux profile automatically selects and applies the generic
   assert.deepEqual(status.bootstrapAppliedPatchIds, ['align-browser-platform-to-runtime']);
   assert.equal(status.bootstrapPatchResults[0].reason, 'aligned');
   assert.equal(status.patchDecisions[0].selected, true);
-  assert.deepEqual(status.runtimeSelectedPatchIds, ['bridge-web-runtime-settings']);
-  assert.deepEqual(status.runtimeAppliedPatchIds, ['bridge-web-runtime-settings']);
-  assert.equal(status.runtimePatchResults[0].reason, 'storage-observer-installed');
-  assert.equal(status.runtimeSettingsBridge.storageObserverInstalled, true);
+  assertRuntimePatchesInstalled(status);
 });
 
 test('fresh verified macOS profile automatically selects and applies the generic alignment patch', async () => {
@@ -94,7 +116,7 @@ test('fresh verified macOS profile automatically selects and applies the generic
   assert.deepEqual(status.bootstrapAppliedPatchIds, ['align-browser-platform-to-runtime']);
   assert.equal(status.bootstrapPatchResults[0].reason, 'aligned');
   assert.equal(status.patchDecisions[0].selected, true);
-  assert.deepEqual(status.runtimeSelectedPatchIds, ['bridge-web-runtime-settings']);
+  assertRuntimePatchesInstalled(status);
 });
 
 test('matching Linux browser/runtime skips an unnecessary alignment patch', async () => {
@@ -115,7 +137,7 @@ test('matching Linux browser/runtime skips an unnecessary alignment patch', asyn
   assert.deepEqual(status.bootstrapSelectedPatchIds, []);
   assert.equal(status.bootstrapPatchApplied, false);
   assert.equal(status.patchDecisions[0].reason, 'browser-platform-mismatch');
-  assert.deepEqual(status.runtimeSelectedPatchIds, ['bridge-web-runtime-settings']);
+  assertRuntimePatchesInstalled(status);
 });
 
 test('matching macOS browser/runtime skips an unnecessary alignment patch', async () => {
@@ -136,7 +158,27 @@ test('matching macOS browser/runtime skips an unnecessary alignment patch', asyn
   assert.deepEqual(status.bootstrapSelectedPatchIds, []);
   assert.equal(status.bootstrapPatchApplied, false);
   assert.equal(status.patchDecisions[0].reason, 'browser-platform-mismatch');
-  assert.deepEqual(status.runtimeSelectedPatchIds, ['bridge-web-runtime-settings']);
+  assertRuntimePatchesInstalled(status);
+});
+
+test('runtime removal patch strips the paired runtime host before forwarding worktree.rm', async () => {
+  const profile = {
+    schemaVersion: 1, environmentId: 'web-synthetic', endpoint: 'ws://example.invalid/', publicKeyB64: 'public',
+    runtimeId: 'runtime-a', platform: 'linux', appVersion: '1.4.188', verifiedAt: Date.now()
+  };
+  const app = loadApp({ profile, discovered: { runtimeId: 'runtime-a', platform: 'linux', appVersion: '1.4.188' } });
+  await new Promise((resolve) => setImmediate(resolve));
+  app.runtimeCalls.length = 0;
+
+  await app.window.api.runtimeEnvironments.call({
+    selector: 'web-synthetic',
+    method: 'worktree.rm',
+    params: { worktree: 'id:repo::/tmp/worktree', hostId: 'runtime:web-synthetic' }
+  });
+
+  assert.equal(app.runtimeCalls.length, 1);
+  assert.equal(app.runtimeCalls[0].params.hostId, undefined);
+  assert.equal(app.window.__orcaWebPatches.getStatus().worktreeRemovalHostQualification.rewrittenCallCount, 1);
 });
 
 test('unknown first load does not mutate browser identity and requests one reload after macOS selection', async () => {

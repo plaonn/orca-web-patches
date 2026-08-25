@@ -2,7 +2,7 @@
   'use strict';
 
   OWP.constants = Object.freeze({
-    SCRIPT_VERSION: '0.2.2',
+    SCRIPT_VERSION: '0.2.3',
     ORCA_ENVIRONMENT_STORAGE_KEY: 'orca.web.runtimeEnvironment.v1',
     WEB_SETTINGS_STORAGE_KEY: 'orca.web.settings.v1',
     PROFILE_STORAGE_KEY: 'orca.web.patches.runtimeProfile.v1',

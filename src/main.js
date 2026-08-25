@@ -87,6 +87,9 @@
     if (patch.id === 'bridge-web-runtime-settings') {
       return OWP.bridgeWebRuntimeSettings.applyBridgeWebRuntimeSettings(windowObject);
     }
+    if (patch.id === 'qualify-runtime-worktree-removal-host') {
+      return OWP.qualifyRuntimeWorktreeRemovalHost.applyQualifyRuntimeWorktreeRemovalHost(windowObject);
+    }
     return { applied: false, fields: [], reason: 'patch-implementation-unavailable' };
   }
 
@@ -156,6 +159,9 @@
         const snapshot = JSON.parse(JSON.stringify(state));
         if (OWP.bridgeWebRuntimeSettings?.getStatus) {
           snapshot.runtimeSettingsBridge = OWP.bridgeWebRuntimeSettings.getStatus();
+        }
+        if (OWP.qualifyRuntimeWorktreeRemovalHost?.getStatus) {
+          snapshot.worktreeRemovalHostQualification = OWP.qualifyRuntimeWorktreeRemovalHost.getStatus();
         }
         return snapshot;
       },

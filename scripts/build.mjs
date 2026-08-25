@@ -11,6 +11,7 @@ const sources = [
   'src/patch-registry.js',
   'src/patches/align-browser-platform-to-runtime.js',
   'src/patches/bridge-web-runtime-settings.js',
+  'src/patches/qualify-runtime-worktree-removal-host.js',
   'src/runtime-discovery.js',
   'src/main.js'
 ];
