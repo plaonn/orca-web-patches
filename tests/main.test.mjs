@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import path from 'node:path';
-import { root, memoryStorage } from './helpers.mjs';
+import { root, memoryStorage, installSyntheticBridgeTransport } from './helpers.mjs';
 
 const modules = [
   'src/constants.js', 'src/version.js', 'src/runtime-profile.js', 'src/patch-registry.js',
@@ -28,17 +28,17 @@ function loadApp({ profile, discovered }) {
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/151.0.0.0 Safari/537.36 Edg/151.0.0.0',
     appVersion: '5.0 (Windows NT 10.0; Win64; x64)'
   });
-  const api = {
-    list: async () => [{ id: 'web-synthetic' }],
-    getStatus: async () => ({ ok: true, result: { runtimeId: discovered.runtimeId, appVersion: discovered.appVersion, hostPlatform: discovered.platform }, _meta: { runtimeId: discovered.runtimeId } }),
-    call: async () => ({ ok: true, result: { platform: discovered.platform } })
-  };
   const window = {
-    localStorage, sessionStorage, navigator, api: { runtimeEnvironments: api },
+    localStorage, sessionStorage, navigator,
     location: { search: '', reload: () => { reloads += 1; } },
-    console,
-    setTimeout: (fn) => { queueMicrotask(fn); return 1; }
+    console
   };
+  installSyntheticBridgeTransport(window, {
+    ok: true,
+    runtimeId: discovered.runtimeId,
+    platform: discovered.platform,
+    appVersion: discovered.appVersion
+  });
   const context = vm.createContext({ console, Date, URLSearchParams, Proxy, Object, Set, Map, Promise, JSON, Number, String, RegExp, Array, Math, queueMicrotask, window, navigator, globalThis: null });
   context.globalThis = context;
   context.__OWP__ = {};
