@@ -10,6 +10,7 @@ const sources = [
   'src/runtime-profile.js',
   'src/patch-registry.js',
   'src/patches/align-browser-platform-to-runtime.js',
+  'src/patches/bridge-web-runtime-settings.js',
   'src/runtime-discovery.js',
   'src/main.js'
 ];

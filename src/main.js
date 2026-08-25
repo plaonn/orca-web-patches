@@ -11,6 +11,10 @@
     bootstrapPatchFields: [],
     bootstrapPatchResults: [],
     patchDecisions: [],
+    runtimeSelectedPatchIds: [],
+    runtimeAppliedPatchIds: [],
+    runtimePatchResults: [],
+    runtimePatchDecisions: [],
     discoveryStatus: 'idle',
     lastDiscovery: null,
     reloadRequested: false
@@ -60,6 +64,10 @@
     return OWP.patchRegistry.selectPatches(profile, selectionContext ?? {}, { phase: 'bootstrap' });
   }
 
+  function selectRuntimePatches(profile) {
+    return OWP.patchRegistry.selectPatches(profile, selectionContext ?? {}, { phase: 'runtime' });
+  }
+
   function patchIds(selection) {
     return selection.selected.map((patch) => patch.id);
   }
@@ -75,6 +83,9 @@
         windowObject.navigator,
         profile?.platform
       );
+    }
+    if (patch.id === 'bridge-web-runtime-settings') {
+      return OWP.bridgeWebRuntimeSettings.applyBridgeWebRuntimeSettings(windowObject);
     }
     return { applied: false, fields: [], reason: 'patch-implementation-unavailable' };
   }
@@ -104,6 +115,27 @@
     state.patchDecisions = selection.decisions;
   }
 
+  function applyRuntimePatches(windowObject, selection, profile) {
+    const appliedPatchIds = [];
+    const results = [];
+
+    for (const patch of selection.selected) {
+      const result = applyPatch(windowObject, patch, profile);
+      if (result?.applied) appliedPatchIds.push(patch.id);
+      results.push({
+        patchId: patch.id,
+        applied: result?.applied === true,
+        fields: [...(result?.fields ?? [])],
+        reason: result?.reason ?? null
+      });
+    }
+
+    state.runtimeSelectedPatchIds = patchIds(selection);
+    state.runtimeAppliedPatchIds = appliedPatchIds;
+    state.runtimePatchResults = results;
+    state.runtimePatchDecisions = selection.decisions;
+  }
+
   function requestBoundedReload(windowObject, reason) {
     const storage = windowObject.sessionStorage;
     const current = storage?.getItem?.(OWP.constants.RELOAD_GUARD_KEY);
@@ -120,7 +152,13 @@
 
   function installDebugApi(windowObject) {
     const api = Object.freeze({
-      getStatus: () => JSON.parse(JSON.stringify(state)),
+      getStatus: () => {
+        const snapshot = JSON.parse(JSON.stringify(state));
+        if (OWP.bridgeWebRuntimeSettings?.getStatus) {
+          snapshot.runtimeSettingsBridge = OWP.bridgeWebRuntimeSettings.getStatus();
+        }
+        return snapshot;
+      },
       recheck: () => runRevalidation(windowObject),
       clearCache: () => {
         OWP.runtimeProfile.clearProfile(windowObject.localStorage);
@@ -196,6 +234,11 @@
     }
 
     clearReloadGuard(windowObject);
+    const runtimeSelection = selectRuntimePatches(profile);
+    applyRuntimePatches(windowObject, runtimeSelection, profile);
+    if (runtimeSelection.selected.length > 0) {
+      debug(windowObject, 'runtime patch selection:', state.runtimePatchDecisions);
+    }
     return state.lastDiscovery;
   }
 
@@ -232,6 +275,7 @@
     revalidate: runRevalidation,
     createSelectionContext,
     selectBootstrapPatches,
+    selectRuntimePatches,
     requestBoundedReload
   });
   start();
