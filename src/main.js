@@ -25,7 +25,8 @@
     return {
       ok: true,
       platform: discovered.platform,
-      appVersion: discovered.appVersion
+      appVersion: discovered.appVersion,
+      transport: discovered.transport ?? null
     };
   }
 
