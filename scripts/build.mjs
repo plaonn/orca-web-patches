@@ -10,6 +10,7 @@ const sources = [
   'src/runtime-profile.js',
   'src/patch-registry.js',
   'src/patches/align-browser-platform-to-runtime.js',
+  'src/patches/project-paired-runtime-authority.js',
   'src/patches/bridge-web-runtime-settings.js',
   'src/patches/bridge-web-project-groups.js',
   'src/patches/qualify-runtime-worktree-removal-host.js',
