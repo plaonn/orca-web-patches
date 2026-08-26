@@ -25,6 +25,7 @@
   // ---- src/constants.js ----
   ((OWP) => {
     'use strict';
+  
     OWP.constants = Object.freeze({
       SCRIPT_VERSION: '0.2.4',
       ORCA_ENVIRONMENT_STORAGE_KEY: 'orca.web.runtimeEnvironment.v1',
@@ -1312,7 +1313,7 @@
       try {
         worktrees.remove = wrappedRemove;
       } catch {
-        // Fall through to defineProperty for stricter proxy/object surfaces.
+        // Fall through to defineProperty for stricter preload surfaces.
       }
       if (worktrees.remove !== wrappedRemove) {
         try {
