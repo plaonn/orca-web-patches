@@ -46,6 +46,28 @@
       rationale: 'Align page-visible browser platform identity with the authoritative connected runtime when a verified affected browser/runtime combination requires it.'
     }),
     Object.freeze({
+      id: 'project-paired-runtime-authority',
+      phase: 'bootstrap',
+      appliesTo: Object.freeze({
+        runtimePlatforms: Object.freeze([]),
+        browserPlatforms: Object.freeze([]),
+        versionRange: null,
+        probe: null
+      }),
+      unknownVersionBehavior: 'skip',
+      unknownProbeBehavior: 'skip',
+      applyUntilFixed: true,
+      evidence: Object.freeze({
+        confirmedAffected: Object.freeze(['1.4.188']),
+        confirmedAffectedContexts: Object.freeze([
+          Object.freeze({ client: 'web', runtime: 'paired', operation: 'runtime-target-selection' })
+        ]),
+        upstreamSourceObservedAt: '894ce0157dcc20dc2e0bb8cf74c97a769c61c5ac',
+        fixedIn: null
+      }),
+      rationale: 'Project the paired Web environment into settings reads without persisting a server preference so renderer runtime-target selection does not fall back to a nonexistent client-local host.'
+    }),
+    Object.freeze({
       id: 'bridge-web-runtime-settings',
       phase: 'runtime',
       appliesTo: Object.freeze({
@@ -87,7 +109,7 @@
         upstreamSourceObservedAt: '894ce0157dcc20dc2e0bb8cf74c97a769c61c5ac',
         fixedIn: null
       }),
-      rationale: 'Restore the projectGroups preload namespace missing from paired Orca Web by routing its basic lifecycle through the existing runtime RPC transport.'
+      rationale: 'Fill the missing projectGroups preload namespace only for the nonexistent client-local catalog; runtime-owned mutations must route through the renderer runtime target instead of being restamped as local.'
     }),
     Object.freeze({
       id: 'qualify-runtime-worktree-removal-host',
