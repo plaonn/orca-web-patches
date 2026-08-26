@@ -1,24 +1,21 @@
 ((OWP) => {
   'use strict';
 
-  const NAMESPACE_MARKER = '__orcaWebPatchesProjectGroupsBridgeV1';
+  const NAMESPACE_MARKER = '__orcaWebPatchesProjectGroupsBridgeV2';
   const REWRAP_INTERVAL_MS = 250;
 
   const patchState = {
     installed: false,
     watcherInstalled: false,
     wrapCount: 0,
-    observedCallCount: 0,
-    lastMethod: null,
+    localListCallCount: 0,
+    rejectedMutationCount: 0,
+    lastRejectedMutation: null,
     lastError: null
   };
 
   let watcherHandle = null;
   let activeWindowObject = null;
-
-  function isRecord(value) {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-  }
 
   function readPairedEnvironment(windowObject) {
     if (windowObject?.__ORCA_WEB_CLIENT__ !== true) return null;
@@ -29,95 +26,26 @@
     }
   }
 
-  function runtimeErrorMessage(response, method) {
-    if (response?.ok === false) {
-      if (typeof response.error?.message === 'string' && response.error.message) {
-        return response.error.message;
-      }
-      if (typeof response.error === 'string' && response.error) return response.error;
-      return `Orca runtime RPC failed: ${method}`;
-    }
-    return `Orca runtime RPC returned an invalid response: ${method}`;
+  function rejectLocalMutation(method) {
+    patchState.rejectedMutationCount += 1;
+    patchState.lastRejectedMutation = method;
+    const error = new Error(
+      `Paired Orca Web project-group mutation reached the local route: ${method}`
+    );
+    patchState.lastError = error.message;
+    throw error;
   }
 
-  async function callRuntimeResult(windowObject, method, params) {
-    if (!readPairedEnvironment(windowObject)) {
-      throw new Error('Paired Orca Web runtime environment is unavailable');
-    }
-    const runtime = windowObject.api?.runtime;
-    if (typeof runtime?.call !== 'function') {
-      throw new Error('Orca Web runtime API is unavailable');
-    }
-
-    patchState.observedCallCount += 1;
-    patchState.lastMethod = method;
-    patchState.lastError = null;
-
-    try {
-      const response = await runtime.call({ method, params });
-      if (!response || response.ok !== true || !Object.hasOwn(response, 'result')) {
-        throw new Error(runtimeErrorMessage(response, method));
-      }
-      return response.result;
-    } catch (error) {
-      patchState.lastError = error instanceof Error ? error.message : String(error);
-      throw error;
-    }
-  }
-
-  function requireRecord(value, label) {
-    if (!isRecord(value)) throw new Error(`Orca runtime RPC returned invalid ${label}`);
-    return value;
-  }
-
-  function createProjectGroupsBridge(windowObject, fallbackNamespace) {
+  function createProjectGroupsBridge(fallbackNamespace) {
     const bridge = {
       list: async () => {
-        const result = requireRecord(
-          await callRuntimeResult(windowObject, 'projectGroup.list', undefined),
-          'projectGroup.list result'
-        );
-        if (!Array.isArray(result.groups)) {
-          throw new Error('Orca runtime RPC returned invalid projectGroup.list groups');
-        }
-        return result.groups;
+        patchState.localListCallCount += 1;
+        return [];
       },
-      create: async (args) => {
-        const result = requireRecord(
-          await callRuntimeResult(windowObject, 'projectGroup.create', args),
-          'projectGroup.create result'
-        );
-        return requireRecord(result.group, 'projectGroup.create group');
-      },
-      update: async ({ groupId, updates }) => {
-        const result = requireRecord(
-          await callRuntimeResult(windowObject, 'projectGroup.update', { groupId, updates }),
-          'projectGroup.update result'
-        );
-        if (result.group !== null && !isRecord(result.group)) {
-          throw new Error('Orca runtime RPC returned invalid projectGroup.update group');
-        }
-        return result.group;
-      },
-      delete: async ({ groupId }) => {
-        const result = await callRuntimeResult(windowObject, 'projectGroup.delete', { groupId });
-        if (typeof result !== 'boolean') {
-          throw new Error('Orca runtime RPC returned invalid projectGroup.delete result');
-        }
-        return result;
-      },
-      moveProject: async ({ projectId, groupId, order }) => {
-        const params = { repo: projectId, groupId };
-        if (order !== undefined) params.order = order;
-        const result = requireRecord(
-          await callRuntimeResult(windowObject, 'projectGroup.moveProject', params),
-          'projectGroup.moveProject result'
-        );
-        if (result.repo !== null && !isRecord(result.repo)) {
-          throw new Error('Orca runtime RPC returned invalid projectGroup.moveProject repo');
-        }
-        return result.repo;
-      }
+      create: async () => rejectLocalMutation('create'),
+      update: async () => rejectLocalMutation('update'),
+      delete: async () => rejectLocalMutation('delete'),
+      moveProject: async () => rejectLocalMutation('moveProject')
     };
     Object.defineProperty(bridge, NAMESPACE_MARKER, { value: true });
 
@@ -138,17 +66,17 @@
       patchState.installed = false;
       return { applied: false, reason: 'runtime-environment-unavailable' };
     }
-    if (typeof windowObject.api?.runtime?.call !== 'function') {
+    if (!windowObject.api) {
       patchState.installed = false;
-      return { applied: false, reason: 'runtime-call-api-unavailable' };
+      return { applied: false, reason: 'orca-api-unavailable' };
     }
-    if (windowObject.api?.projectGroups?.[NAMESPACE_MARKER] === true) {
+    if (windowObject.api.projectGroups?.[NAMESPACE_MARKER] === true) {
       patchState.installed = true;
       return { applied: true, reason: 'already-installed' };
     }
 
-    const fallbackNamespace = windowObject.api?.projectGroups;
-    const bridge = createProjectGroupsBridge(windowObject, fallbackNamespace);
+    const fallbackNamespace = windowObject.api.projectGroups;
+    const bridge = createProjectGroupsBridge(fallbackNamespace);
     try {
       windowObject.api.projectGroups = bridge;
     } catch {
@@ -202,7 +130,7 @@
     return {
       applied: installed.applied,
       fields: [
-        ...(installed.applied ? ['projectGroups.list/create/update/delete/moveProject'] : []),
+        ...(installed.applied ? ['projectGroups.list(empty-local-catalog)', 'projectGroups.local-mutations(fail-closed)'] : []),
         ...(patchState.watcherInstalled ? ['project-groups-api-rewrap-watcher'] : [])
       ],
       reason: installed.reason
@@ -211,8 +139,7 @@
 
   OWP.bridgeWebProjectGroups = Object.freeze({
     readPairedEnvironment,
-    runtimeErrorMessage,
-    callRuntimeResult,
+    rejectLocalMutation,
     createProjectGroupsBridge,
     installProjectGroupsBridge,
     ensureCurrentBridge,
