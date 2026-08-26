@@ -4,6 +4,7 @@ import { loadModules } from './helpers.mjs';
 
 const OWP = loadModules(['src/version.js', 'src/patch-registry.js']);
 const patch = OWP.patchRegistry.getPatch('align-browser-platform-to-runtime');
+const authorityPatch = OWP.patchRegistry.getPatch('project-paired-runtime-authority');
 
 const windowsBrowser = { browserPlatform: 'Win32' };
 const linuxBrowser = { browserPlatform: 'Linux x86_64' };
@@ -29,7 +30,7 @@ test('verified affected browser/runtime pairs apply conservatively until an upst
   }
 });
 
-test('runtime and browser platform evidence both constrain automatic selection', () => {
+test('runtime and browser platform evidence both constrain automatic alignment selection', () => {
   assert.equal(OWP.patchRegistry.shouldApplyPatch(
     patch,
     { platform: 'win32', appVersion: '1.4.188' },
@@ -75,7 +76,24 @@ test('runtime and browser platform evidence both constrain automatic selection',
   }
 });
 
-test('unknown browser platform fails closed when the affected browser family is evidence-bound', () => {
+test('paired runtime authority is version-bound but independent of browser/runtime OS pair', () => {
+  for (const platform of ['linux', 'darwin', 'win32']) {
+    assert.equal(OWP.patchRegistry.shouldApplyPatch(
+      authorityPatch,
+      { platform, appVersion: '1.4.188' },
+      windowsBrowser
+    ), true);
+  }
+  const unknown = OWP.patchRegistry.evaluatePatch(
+    authorityPatch,
+    { platform: 'linux', appVersion: null },
+    windowsBrowser
+  );
+  assert.equal(unknown.selected, false);
+  assert.equal(unknown.reason, 'version-unknown');
+});
+
+test('unknown browser platform fails closed when the alignment patch is evidence-bound', () => {
   const decision = OWP.patchRegistry.evaluatePatch(
     patch,
     { platform: 'darwin', appVersion: '1.4.188' },
@@ -122,14 +140,17 @@ test('fixedIn retires valid versions at or above the fix without misclassifying 
   ), true);
 });
 
-test('selectPatches returns generic patch identity and explainable decisions for a phase', () => {
+test('bootstrap selection includes both alignment and paired runtime authority when both apply', () => {
   const selection = OWP.patchRegistry.selectPatches(
     { platform: 'darwin', appVersion: '1.4.188' },
     windowsBrowser,
     { phase: 'bootstrap' }
   );
 
-  assert.equal(selection.selected.map((entry) => entry.id).join(','), 'align-browser-platform-to-runtime');
-  assert.equal(selection.decisions.length, 1);
-  assert.equal(selection.decisions[0].selected, true);
+  assert.equal(
+    selection.selected.map((entry) => entry.id).join(','),
+    'align-browser-platform-to-runtime,project-paired-runtime-authority'
+  );
+  assert.equal(selection.decisions.length, 2);
+  assert.equal(selection.decisions.every((decision) => decision.selected), true);
 });
