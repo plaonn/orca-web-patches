@@ -46,7 +46,9 @@ test('keeps the paired Web client-local project-group catalog empty', async () =
   const app = makeWindow();
   const result = OWP.bridgeWebProjectGroups.applyBridgeWebProjectGroups(app.window);
   assert.equal(result.applied, true);
-  assert.deepEqual(await app.window.api.projectGroups.list(), []);
+  const groups = await app.window.api.projectGroups.list();
+  assert.equal(Array.isArray(groups), true);
+  assert.equal(groups.length, 0);
 
   const status = OWP.bridgeWebProjectGroups.getStatus();
   assert.equal(status.localListCallCount, 1);
@@ -103,7 +105,9 @@ test('rewraps projectGroups after Orca replaces the preload API object', async (
   app.window.api = { projectGroups: app.fallbackNamespace };
   app.intervals[0]();
 
-  assert.deepEqual(await app.window.api.projectGroups.list(), []);
+  const groups = await app.window.api.projectGroups.list();
+  assert.equal(Array.isArray(groups), true);
+  assert.equal(groups.length, 0);
   await assert.rejects(
     () => app.window.api.projectGroups.create({ name: 'Again' }),
     /local route: create/
