@@ -25,95 +25,54 @@ function makeWindow({ withEnvironment = true, webClient = true } = {}) {
       ? { 'orca.web.runtimeEnvironment.v1': JSON.stringify(environment) }
       : {})
   });
-  const calls = [];
   const intervals = [];
   const fallbackNamespace = new Proxy(function projectGroupsFallback() {}, {
     get: (_target, property) => property === 'scanNested' ? 'fallback-scan' : undefined
   });
-  const makeRuntime = () => ({
-    call: async (request) => {
-      calls.push(request);
-      if (request.method === 'projectGroup.list') {
-        return { ok: true, result: { groups: [{ id: 'group-a', name: 'A' }] } };
-      }
-      if (request.method === 'projectGroup.create') {
-        return {
-          ok: true,
-          result: { group: { id: 'group-new', name: request.params.name, connectionId: null } }
-        };
-      }
-      if (request.method === 'projectGroup.update') {
-        return {
-          ok: true,
-          result: { group: { id: request.params.groupId, ...request.params.updates } }
-        };
-      }
-      if (request.method === 'projectGroup.delete') {
-        return { ok: true, result: true };
-      }
-      if (request.method === 'projectGroup.moveProject') {
-        return { ok: true, result: { repo: { id: request.params.repo } } };
-      }
-      return { ok: false, error: { message: `Unexpected method: ${request.method}` } };
-    }
-  });
   const window = {
     __ORCA_WEB_CLIENT__: webClient,
     localStorage,
-    api: {
-      runtime: makeRuntime(),
-      projectGroups: fallbackNamespace
-    },
+    api: { projectGroups: fallbackNamespace },
     setInterval: (callback) => {
       intervals.push(callback);
       return intervals.length;
     }
   };
-  return { window, calls, intervals, fallbackNamespace, makeRuntime };
+  return { window, intervals, fallbackNamespace };
 }
 
-test('bridges the basic project-group lifecycle through the paired runtime RPC transport', async () => {
+test('keeps the paired Web client-local project-group catalog empty', async () => {
   const OWP = freshPatchModules();
   const app = makeWindow();
   const result = OWP.bridgeWebProjectGroups.applyBridgeWebProjectGroups(app.window);
   assert.equal(result.applied, true);
+  assert.deepEqual(await app.window.api.projectGroups.list(), []);
 
-  const createArgs = {
-    name: 'Group',
-    parentPath: null,
-    parentGroupId: null,
-    createdFrom: 'manual'
-  };
-  const created = await app.window.api.projectGroups.create(createArgs);
-  assert.equal(created.id, 'group-new');
-  assert.equal(created.connectionId, null);
-  assert.deepEqual(JSON.parse(JSON.stringify(app.calls[0])), {
-    method: 'projectGroup.create',
-    params: createArgs
-  });
+  const status = OWP.bridgeWebProjectGroups.getStatus();
+  assert.equal(status.localListCallCount, 1);
+  assert.equal(status.rejectedMutationCount, 0);
+});
 
-  const groups = await app.window.api.projectGroups.list();
-  assert.equal(groups.length, 1);
-  assert.equal(groups[0].id, 'group-a');
+test('rejects project-group mutations that incorrectly reach the local route', async () => {
+  const OWP = freshPatchModules();
+  const app = makeWindow();
+  OWP.bridgeWebProjectGroups.applyBridgeWebProjectGroups(app.window);
 
-  const updated = await app.window.api.projectGroups.update({
-    groupId: 'group-new',
-    updates: { name: 'Renamed' }
-  });
-  assert.equal(updated.name, 'Renamed');
+  for (const [method, args] of [
+    ['create', { name: 'Group' }],
+    ['update', { groupId: 'group-a', updates: { name: 'Renamed' } }],
+    ['delete', { groupId: 'group-a' }],
+    ['moveProject', { projectId: 'repo-a', groupId: 'group-a' }]
+  ]) {
+    await assert.rejects(
+      () => app.window.api.projectGroups[method](args),
+      new RegExp(`local route: ${method}`)
+    );
+  }
 
-  assert.equal(await app.window.api.projectGroups.delete({ groupId: 'group-new' }), true);
-
-  const moved = await app.window.api.projectGroups.moveProject({
-    projectId: 'repo-a',
-    groupId: 'group-a',
-    order: 0
-  });
-  assert.equal(moved.id, 'repo-a');
-  assert.deepEqual(JSON.parse(JSON.stringify(app.calls.at(-1))), {
-    method: 'projectGroup.moveProject',
-    params: { repo: 'repo-a', groupId: 'group-a', order: 0 }
-  });
+  const status = OWP.bridgeWebProjectGroups.getStatus();
+  assert.equal(status.rejectedMutationCount, 4);
+  assert.equal(status.lastRejectedMutation, 'moveProject');
 });
 
 test('preserves fallback behavior for project-group methods outside the bounded bridge', () => {
@@ -121,27 +80,6 @@ test('preserves fallback behavior for project-group methods outside the bounded 
   const app = makeWindow();
   OWP.bridgeWebProjectGroups.applyBridgeWebProjectGroups(app.window);
   assert.equal(app.window.api.projectGroups.scanNested, 'fallback-scan');
-});
-
-test('propagates runtime failures and rejects malformed success payloads instead of inventing results', async () => {
-  const OWP = freshPatchModules();
-  const app = makeWindow();
-  OWP.bridgeWebProjectGroups.applyBridgeWebProjectGroups(app.window);
-
-  app.window.api.runtime.call = async () => ({
-    ok: false,
-    error: { code: 'project_group_failed', message: 'runtime failed' }
-  });
-  await assert.rejects(
-    () => app.window.api.projectGroups.create({ name: 'Broken' }),
-    /runtime failed/
-  );
-
-  app.window.api.runtime.call = async () => ({ ok: true, result: {} });
-  await assert.rejects(
-    () => app.window.api.projectGroups.create({ name: 'Malformed' }),
-    /invalid projectGroup\.create group/
-  );
 });
 
 test('fails closed outside a paired Orca Web environment', () => {
@@ -162,14 +100,14 @@ test('rewraps projectGroups after Orca replaces the preload API object', async (
   OWP.bridgeWebProjectGroups.applyBridgeWebProjectGroups(app.window);
   assert.equal(app.intervals.length, 1);
 
-  app.window.api = {
-    runtime: app.makeRuntime(),
-    projectGroups: app.fallbackNamespace
-  };
+  app.window.api = { projectGroups: app.fallbackNamespace };
   app.intervals[0]();
 
-  assert.equal(typeof app.window.api.projectGroups.create, 'function');
-  assert.equal((await app.window.api.projectGroups.create({ name: 'Again' })).name, 'Again');
+  assert.deepEqual(await app.window.api.projectGroups.list(), []);
+  await assert.rejects(
+    () => app.window.api.projectGroups.create({ name: 'Again' }),
+    /local route: create/
+  );
   const status = OWP.bridgeWebProjectGroups.getStatus();
   assert.equal(status.watcherInstalled, true);
   assert.equal(status.wrapCount >= 2, true);
