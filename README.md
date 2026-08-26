@@ -1,5 +1,7 @@
 # Orca Web Patches
 
+**Stable:** `0.2.5` · [Install / update userscript](https://raw.githubusercontent.com/plaonn/orca-web-patches/main/dist/orca-web-patches.user.js)
+
 Browser-side compatibility patches for [Orca Web](https://github.com/stablyai/orca), initially delivered as one Tampermonkey userscript.
 
 The repository intentionally separates patch policy from local deployment configuration. Hostnames, URLs, ports, paired runtime identities, and runtime caches stay in the browser; they are not repository configuration.
