@@ -8,12 +8,13 @@ import { root, memoryStorage, installSyntheticBridgeTransport } from './helpers.
 const modules = [
   'src/constants.js', 'src/version.js', 'src/runtime-profile.js', 'src/patch-registry.js',
   'src/patches/align-browser-platform-to-runtime.js', 'src/patches/bridge-web-runtime-settings.js',
-  'src/patches/qualify-runtime-worktree-removal-host.js',
+  'src/patches/bridge-web-project-groups.js', 'src/patches/qualify-runtime-worktree-removal-host.js',
   'src/runtime-discovery.js', 'src/main.js'
 ];
 
 const expectedRuntimePatchIds = [
   'bridge-web-runtime-settings',
+  'bridge-web-project-groups',
   'qualify-runtime-worktree-removal-host'
 ];
 
@@ -52,6 +53,12 @@ function loadApp({ profile, discovered, browserPlatform = 'Win32' }) {
       settings: {
         set: async (updates) => updates
       },
+      runtime: {
+        call: async (request) => {
+          runtimeCalls.push(request);
+          return { ok: true, result: {} };
+        }
+      },
       runtimeEnvironments: {
         call: async (request) => {
           runtimeCalls.push(request);
@@ -77,6 +84,7 @@ function assertRuntimePatchesInstalled(status) {
   assert.deepEqual(JSON.parse(JSON.stringify(status.runtimeSelectedPatchIds)), expectedRuntimePatchIds);
   assert.deepEqual(JSON.parse(JSON.stringify(status.runtimeAppliedPatchIds)), expectedRuntimePatchIds);
   assert.equal(status.runtimeSettingsBridge.storageObserverInstalled, true);
+  assert.equal(status.projectGroupsBridge.installed, true);
   assert.equal(status.worktreeRemovalHostQualification.installed, true);
 }
 
