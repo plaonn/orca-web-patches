@@ -12,7 +12,7 @@ test('build emits deterministic userscript metadata and contains no user-specifi
   const first = artifact;
   execFileSync(process.execPath, ['scripts/build.mjs'], { cwd: root, stdio: 'pipe' });
   assert.equal(fs.readFileSync(artifactPath, 'utf8'), first);
-  assert.match(artifact, /@version\s+0\.2\.3/);
+  assert.match(artifact, /@version\s+0\.2\.4/);
   assert.match(artifact, /@license\s+MIT/);
   assert.match(artifact, /@run-at\s+document-start/);
   assert.match(artifact, /@sandbox\s+raw/);
