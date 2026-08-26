@@ -7,9 +7,9 @@ import { root, memoryStorage, installSyntheticBridgeTransport } from './helpers.
 
 const modules = [
   'src/constants.js', 'src/version.js', 'src/runtime-profile.js', 'src/patch-registry.js',
-  'src/patches/align-browser-platform-to-runtime.js', 'src/patches/bridge-web-runtime-settings.js',
-  'src/patches/bridge-web-project-groups.js', 'src/patches/qualify-runtime-worktree-removal-host.js',
-  'src/runtime-discovery.js', 'src/main.js'
+  'src/patches/align-browser-platform-to-runtime.js', 'src/patches/project-paired-runtime-authority.js',
+  'src/patches/bridge-web-runtime-settings.js', 'src/patches/bridge-web-project-groups.js',
+  'src/patches/qualify-runtime-worktree-removal-host.js', 'src/runtime-discovery.js', 'src/main.js'
 ];
 
 const expectedRuntimePatchIds = [
@@ -83,12 +83,13 @@ function loadApp({ profile, discovered, browserPlatform = 'Win32' }) {
 function assertRuntimePatchesInstalled(status) {
   assert.deepEqual(JSON.parse(JSON.stringify(status.runtimeSelectedPatchIds)), expectedRuntimePatchIds);
   assert.deepEqual(JSON.parse(JSON.stringify(status.runtimeAppliedPatchIds)), expectedRuntimePatchIds);
+  assert.equal(status.pairedRuntimeAuthority.installed, true);
   assert.equal(status.runtimeSettingsBridge.storageObserverInstalled, true);
   assert.equal(status.projectGroupsBridge.installed, true);
   assert.equal(status.worktreeRemovalHostQualification.installed, true);
 }
 
-test('fresh verified Linux profile automatically selects and applies the generic alignment patch', async () => {
+test('fresh verified Linux profile applies platform alignment and paired runtime authority', async () => {
   const now = Date.now();
   const profile = {
     schemaVersion: 1, environmentId: 'web-synthetic', endpoint: 'ws://example.invalid/', publicKeyB64: 'public',
@@ -100,14 +101,14 @@ test('fresh verified Linux profile automatically selects and applies the generic
   assert.equal(app.getReloads(), 0);
 
   const status = app.window.__orcaWebPatches.getStatus();
-  assert.deepEqual(status.bootstrapSelectedPatchIds, ['align-browser-platform-to-runtime']);
-  assert.deepEqual(status.bootstrapAppliedPatchIds, ['align-browser-platform-to-runtime']);
+  assert.deepEqual(status.bootstrapSelectedPatchIds, ['align-browser-platform-to-runtime', 'project-paired-runtime-authority']);
+  assert.deepEqual(status.bootstrapAppliedPatchIds, ['align-browser-platform-to-runtime', 'project-paired-runtime-authority']);
   assert.equal(status.bootstrapPatchResults[0].reason, 'aligned');
-  assert.equal(status.patchDecisions[0].selected, true);
+  assert.equal(status.patchDecisions.every((entry) => entry.selected), true);
   assertRuntimePatchesInstalled(status);
 });
 
-test('fresh verified macOS profile automatically selects and applies the generic alignment patch', async () => {
+test('fresh verified macOS profile applies platform alignment and paired runtime authority', async () => {
   const now = Date.now();
   const profile = {
     schemaVersion: 1, environmentId: 'web-synthetic', endpoint: 'ws://example.invalid/', publicKeyB64: 'public',
@@ -120,14 +121,13 @@ test('fresh verified macOS profile automatically selects and applies the generic
   assert.equal(app.getReloads(), 0);
 
   const status = app.window.__orcaWebPatches.getStatus();
-  assert.deepEqual(status.bootstrapSelectedPatchIds, ['align-browser-platform-to-runtime']);
-  assert.deepEqual(status.bootstrapAppliedPatchIds, ['align-browser-platform-to-runtime']);
+  assert.deepEqual(status.bootstrapSelectedPatchIds, ['align-browser-platform-to-runtime', 'project-paired-runtime-authority']);
+  assert.deepEqual(status.bootstrapAppliedPatchIds, ['align-browser-platform-to-runtime', 'project-paired-runtime-authority']);
   assert.equal(status.bootstrapPatchResults[0].reason, 'aligned');
-  assert.equal(status.patchDecisions[0].selected, true);
   assertRuntimePatchesInstalled(status);
 });
 
-test('matching Linux browser/runtime skips an unnecessary alignment patch', async () => {
+test('matching Linux browser/runtime skips alignment but still projects paired runtime authority', async () => {
   const profile = {
     schemaVersion: 1, environmentId: 'web-synthetic', endpoint: 'ws://example.invalid/', publicKeyB64: 'public',
     runtimeId: 'runtime-a', platform: 'linux', appVersion: '1.4.188', verifiedAt: Date.now()
@@ -142,13 +142,13 @@ test('matching Linux browser/runtime skips an unnecessary alignment patch', asyn
   assert.equal(app.getReloads(), 0);
 
   const status = app.window.__orcaWebPatches.getStatus();
-  assert.deepEqual(status.bootstrapSelectedPatchIds, []);
-  assert.equal(status.bootstrapPatchApplied, false);
+  assert.deepEqual(status.bootstrapSelectedPatchIds, ['project-paired-runtime-authority']);
+  assert.equal(status.bootstrapPatchApplied, true);
   assert.equal(status.patchDecisions[0].reason, 'browser-platform-mismatch');
   assertRuntimePatchesInstalled(status);
 });
 
-test('matching macOS browser/runtime skips an unnecessary alignment patch', async () => {
+test('matching macOS browser/runtime skips alignment but still projects paired runtime authority', async () => {
   const profile = {
     schemaVersion: 1, environmentId: 'web-synthetic', endpoint: 'ws://example.invalid/', publicKeyB64: 'public',
     runtimeId: 'runtime-mac', platform: 'darwin', appVersion: '1.4.188', verifiedAt: Date.now()
@@ -163,8 +163,8 @@ test('matching macOS browser/runtime skips an unnecessary alignment patch', asyn
   assert.equal(app.getReloads(), 0);
 
   const status = app.window.__orcaWebPatches.getStatus();
-  assert.deepEqual(status.bootstrapSelectedPatchIds, []);
-  assert.equal(status.bootstrapPatchApplied, false);
+  assert.deepEqual(status.bootstrapSelectedPatchIds, ['project-paired-runtime-authority']);
+  assert.equal(status.bootstrapPatchApplied, true);
   assert.equal(status.patchDecisions[0].reason, 'browser-platform-mismatch');
   assertRuntimePatchesInstalled(status);
 });
@@ -189,15 +189,18 @@ test('runtime removal patch strips the paired runtime host before forwarding wor
   assert.equal(app.window.__orcaWebPatches.getStatus().worktreeRemovalHostQualification.rewrittenCallCount, 1);
 });
 
-test('unknown first load does not mutate browser identity and requests one reload after macOS selection', async () => {
+test('unknown first load requests one reload after verified bootstrap selection becomes available', async () => {
   const app = loadApp({ profile: null, discovered: { runtimeId: 'runtime-mac', platform: 'darwin', appVersion: '1.4.188' } });
   assert.equal(app.navigator.platform, 'Win32');
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(app.getReloads(), 1);
-  assert.equal(app.window.__orcaWebPatches.getStatus().patchDecisions[0].selected, true);
+  assert.deepEqual(
+    app.window.__orcaWebPatches.getStatus().patchDecisions.map((entry) => entry.selected),
+    [true, true]
+  );
 });
 
-test('stale Linux cache corrected to Windows requests reload and next bootstrap will select no patch', async () => {
+test('stale Linux cache corrected to Windows reloads from alignment plus authority to authority only', async () => {
   const profile = {
     schemaVersion: 1, environmentId: 'web-synthetic', endpoint: 'ws://example.invalid/', publicKeyB64: 'public',
     runtimeId: 'runtime-old', platform: 'linux', appVersion: '1.4.188', verifiedAt: Date.now()
@@ -208,5 +211,5 @@ test('stale Linux cache corrected to Windows requests reload and next bootstrap 
   assert.equal(app.getReloads(), 1);
   const cached = JSON.parse(app.localStorage.getItem('orca.web.patches.runtimeProfile.v1'));
   assert.equal(cached.platform, 'win32');
-  assert.deepEqual(app.window.__orcaWebPatches.getStatus().patchDecisions.map((entry) => entry.selected), [false]);
+  assert.deepEqual(app.window.__orcaWebPatches.getStatus().patchDecisions.map((entry) => entry.selected), [false, true]);
 });
