@@ -68,6 +68,28 @@
       rationale: 'Forward runtime-supported settings that Orca Web persists locally but omits from settings.update when paired to a runtime.'
     }),
     Object.freeze({
+      id: 'bridge-web-project-groups',
+      phase: 'runtime',
+      appliesTo: Object.freeze({
+        runtimePlatforms: Object.freeze([]),
+        browserPlatforms: Object.freeze([]),
+        versionRange: null,
+        probe: null
+      }),
+      unknownVersionBehavior: 'skip',
+      unknownProbeBehavior: 'skip',
+      applyUntilFixed: true,
+      evidence: Object.freeze({
+        confirmedAffected: Object.freeze(['1.4.188']),
+        confirmedAffectedContexts: Object.freeze([
+          Object.freeze({ client: 'web', runtime: 'paired', operation: 'project-groups' })
+        ]),
+        upstreamSourceObservedAt: '894ce0157dcc20dc2e0bb8cf74c97a769c61c5ac',
+        fixedIn: null
+      }),
+      rationale: 'Restore the projectGroups preload namespace missing from paired Orca Web by routing its basic lifecycle through the existing runtime RPC transport.'
+    }),
+    Object.freeze({
       id: 'qualify-runtime-worktree-removal-host',
       phase: 'runtime',
       appliesTo: Object.freeze({
