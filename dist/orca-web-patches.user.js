@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Orca Web Patches
 // @namespace    https://github.com/plaonn/orca-web-patches
-// @version      0.2.4
+// @version      0.2.5
 // @description  Version-aware compatibility patches for Orca Web.
 // @license      MIT
 // @homepageURL  https://github.com/plaonn/orca-web-patches
@@ -27,7 +27,7 @@
     'use strict';
   
     OWP.constants = Object.freeze({
-      SCRIPT_VERSION: '0.2.4',
+      SCRIPT_VERSION: '0.2.5',
       ORCA_ENVIRONMENT_STORAGE_KEY: 'orca.web.runtimeEnvironment.v1',
       WEB_SETTINGS_STORAGE_KEY: 'orca.web.settings.v1',
       PROFILE_STORAGE_KEY: 'orca.web.patches.runtimeProfile.v1',
@@ -267,6 +267,28 @@
         rationale: 'Align page-visible browser platform identity with the authoritative connected runtime when a verified affected browser/runtime combination requires it.'
       }),
       Object.freeze({
+        id: 'project-paired-runtime-authority',
+        phase: 'bootstrap',
+        appliesTo: Object.freeze({
+          runtimePlatforms: Object.freeze([]),
+          browserPlatforms: Object.freeze([]),
+          versionRange: null,
+          probe: null
+        }),
+        unknownVersionBehavior: 'skip',
+        unknownProbeBehavior: 'skip',
+        applyUntilFixed: true,
+        evidence: Object.freeze({
+          confirmedAffected: Object.freeze(['1.4.188']),
+          confirmedAffectedContexts: Object.freeze([
+            Object.freeze({ client: 'web', runtime: 'paired', operation: 'runtime-target-selection' })
+          ]),
+          upstreamSourceObservedAt: '894ce0157dcc20dc2e0bb8cf74c97a769c61c5ac',
+          fixedIn: null
+        }),
+        rationale: 'Project the paired Web environment into settings reads without persisting a server preference so renderer runtime-target selection does not fall back to a nonexistent client-local host.'
+      }),
+      Object.freeze({
         id: 'bridge-web-runtime-settings',
         phase: 'runtime',
         appliesTo: Object.freeze({
@@ -308,7 +330,7 @@
           upstreamSourceObservedAt: '894ce0157dcc20dc2e0bb8cf74c97a769c61c5ac',
           fixedIn: null
         }),
-        rationale: 'Restore the projectGroups preload namespace missing from paired Orca Web by routing its basic lifecycle through the existing runtime RPC transport.'
+        rationale: 'Fill the missing projectGroups preload namespace only for the nonexistent client-local catalog; runtime-owned mutations must route through the renderer runtime target instead of being restamped as local.'
       }),
       Object.freeze({
         id: 'qualify-runtime-worktree-removal-host',
@@ -595,6 +617,130 @@
       rewritePlatformTuple,
       createAlignedUserAgentData,
       applyAlignBrowserPlatformToRuntime
+    });
+  })(OWP);
+  
+
+  // ---- src/patches/project-paired-runtime-authority.js ----
+  ((OWP) => {
+    'use strict';
+  
+    const GET_ITEM_MARKER = '__orcaWebPatchesPairedRuntimeAuthorityV1';
+  
+    const patchState = {
+      installed: false,
+      projectedReadCount: 0,
+      lastProjectedEnvironmentId: null,
+      lastError: null
+    };
+  
+    function parseRecord(raw) {
+      if (typeof raw !== 'string' || raw.length === 0) return null;
+      try {
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+      } catch {
+        return null;
+      }
+    }
+  
+    function readEnvironmentId(rawEnvironment) {
+      const parsed = parseRecord(rawEnvironment);
+      const id = typeof parsed?.id === 'string' ? parsed.id.trim() : '';
+      return id || null;
+    }
+  
+    function projectSettingsRead(rawSettings, environmentId) {
+      if (!environmentId) return rawSettings;
+      if (rawSettings === null) {
+        return JSON.stringify({ activeRuntimeEnvironmentId: environmentId });
+      }
+      const parsed = parseRecord(rawSettings);
+      if (!parsed) return rawSettings;
+      const explicit = typeof parsed.activeRuntimeEnvironmentId === 'string'
+        ? parsed.activeRuntimeEnvironmentId.trim()
+        : '';
+      if (explicit) return rawSettings;
+      return JSON.stringify({ ...parsed, activeRuntimeEnvironmentId: environmentId });
+    }
+  
+    function installPairedRuntimeAuthorityProjection(windowObject) {
+      const storage = windowObject?.localStorage;
+      if (!storage || typeof storage.getItem !== 'function') {
+        patchState.installed = false;
+        return { applied: false, reason: 'local-storage-unavailable' };
+      }
+  
+      const prototype = Object.getPrototypeOf(storage);
+      const target = prototype && typeof prototype.getItem === 'function' ? prototype : storage;
+      const currentGetItem = target.getItem;
+      if (currentGetItem?.[GET_ITEM_MARKER] === true) {
+        patchState.installed = true;
+        return { applied: true, reason: 'already-installed' };
+      }
+  
+      const wrappedGetItem = function projectedWebSettingsGetItem(key) {
+        const raw = Reflect.apply(currentGetItem, this, [key]);
+        if (this !== storage || String(key) !== OWP.constants.WEB_SETTINGS_STORAGE_KEY) {
+          return raw;
+        }
+  
+        try {
+          const rawEnvironment = Reflect.apply(currentGetItem, this, [
+            OWP.constants.ORCA_ENVIRONMENT_STORAGE_KEY
+          ]);
+          const environmentId = readEnvironmentId(rawEnvironment);
+          const projected = projectSettingsRead(raw, environmentId);
+          if (projected !== raw) {
+            patchState.projectedReadCount += 1;
+            patchState.lastProjectedEnvironmentId = environmentId;
+          }
+          return projected;
+        } catch (error) {
+          patchState.lastError = error instanceof Error ? error.message : String(error);
+          return raw;
+        }
+      };
+      Object.defineProperty(wrappedGetItem, GET_ITEM_MARKER, { value: true });
+  
+      try {
+        target.getItem = wrappedGetItem;
+      } catch {
+        // Fall through to defineProperty for browser Storage prototypes.
+      }
+      if (target.getItem !== wrappedGetItem) {
+        try {
+          Object.defineProperty(target, 'getItem', {
+            value: wrappedGetItem,
+            configurable: true,
+            writable: true
+          });
+        } catch {
+          patchState.installed = false;
+          return { applied: false, reason: 'storage-getitem-not-writable' };
+        }
+      }
+  
+      patchState.installed = true;
+      return { applied: true, reason: 'installed' };
+    }
+  
+    function applyProjectPairedRuntimeAuthority(windowObject) {
+      const result = installPairedRuntimeAuthorityProjection(windowObject);
+      return {
+        applied: result.applied,
+        fields: result.applied ? ['localStorage.getItem(orca.web.settings.v1)'] : [],
+        reason: result.reason
+      };
+    }
+  
+    OWP.projectPairedRuntimeAuthority = Object.freeze({
+      parseRecord,
+      readEnvironmentId,
+      projectSettingsRead,
+      installPairedRuntimeAuthorityProjection,
+      applyProjectPairedRuntimeAuthority,
+      getStatus: () => ({ ...patchState })
     });
   })(OWP);
   
@@ -904,24 +1050,21 @@
   ((OWP) => {
     'use strict';
   
-    const NAMESPACE_MARKER = '__orcaWebPatchesProjectGroupsBridgeV1';
+    const NAMESPACE_MARKER = '__orcaWebPatchesProjectGroupsBridgeV2';
     const REWRAP_INTERVAL_MS = 250;
   
     const patchState = {
       installed: false,
       watcherInstalled: false,
       wrapCount: 0,
-      observedCallCount: 0,
-      lastMethod: null,
+      localListCallCount: 0,
+      rejectedMutationCount: 0,
+      lastRejectedMutation: null,
       lastError: null
     };
   
     let watcherHandle = null;
     let activeWindowObject = null;
-  
-    function isRecord(value) {
-      return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-    }
   
     function readPairedEnvironment(windowObject) {
       if (windowObject?.__ORCA_WEB_CLIENT__ !== true) return null;
@@ -932,95 +1075,26 @@
       }
     }
   
-    function runtimeErrorMessage(response, method) {
-      if (response?.ok === false) {
-        if (typeof response.error?.message === 'string' && response.error.message) {
-          return response.error.message;
-        }
-        if (typeof response.error === 'string' && response.error) return response.error;
-        return `Orca runtime RPC failed: ${method}`;
-      }
-      return `Orca runtime RPC returned an invalid response: ${method}`;
+    function rejectLocalMutation(method) {
+      patchState.rejectedMutationCount += 1;
+      patchState.lastRejectedMutation = method;
+      const error = new Error(
+        `Paired Orca Web project-group mutation reached the local route: ${method}`
+      );
+      patchState.lastError = error.message;
+      throw error;
     }
   
-    async function callRuntimeResult(windowObject, method, params) {
-      if (!readPairedEnvironment(windowObject)) {
-        throw new Error('Paired Orca Web runtime environment is unavailable');
-      }
-      const runtime = windowObject.api?.runtime;
-      if (typeof runtime?.call !== 'function') {
-        throw new Error('Orca Web runtime API is unavailable');
-      }
-  
-      patchState.observedCallCount += 1;
-      patchState.lastMethod = method;
-      patchState.lastError = null;
-  
-      try {
-        const response = await runtime.call({ method, params });
-        if (!response || response.ok !== true || !Object.hasOwn(response, 'result')) {
-          throw new Error(runtimeErrorMessage(response, method));
-        }
-        return response.result;
-      } catch (error) {
-        patchState.lastError = error instanceof Error ? error.message : String(error);
-        throw error;
-      }
-    }
-  
-    function requireRecord(value, label) {
-      if (!isRecord(value)) throw new Error(`Orca runtime RPC returned invalid ${label}`);
-      return value;
-    }
-  
-    function createProjectGroupsBridge(windowObject, fallbackNamespace) {
+    function createProjectGroupsBridge(fallbackNamespace) {
       const bridge = {
         list: async () => {
-          const result = requireRecord(
-            await callRuntimeResult(windowObject, 'projectGroup.list', undefined),
-            'projectGroup.list result'
-          );
-          if (!Array.isArray(result.groups)) {
-            throw new Error('Orca runtime RPC returned invalid projectGroup.list groups');
-          }
-          return result.groups;
+          patchState.localListCallCount += 1;
+          return [];
         },
-        create: async (args) => {
-          const result = requireRecord(
-            await callRuntimeResult(windowObject, 'projectGroup.create', args),
-            'projectGroup.create result'
-          );
-          return requireRecord(result.group, 'projectGroup.create group');
-        },
-        update: async ({ groupId, updates }) => {
-          const result = requireRecord(
-            await callRuntimeResult(windowObject, 'projectGroup.update', { groupId, updates }),
-            'projectGroup.update result'
-          );
-          if (result.group !== null && !isRecord(result.group)) {
-            throw new Error('Orca runtime RPC returned invalid projectGroup.update group');
-          }
-          return result.group;
-        },
-        delete: async ({ groupId }) => {
-          const result = await callRuntimeResult(windowObject, 'projectGroup.delete', { groupId });
-          if (typeof result !== 'boolean') {
-            throw new Error('Orca runtime RPC returned invalid projectGroup.delete result');
-          }
-          return result;
-        },
-        moveProject: async ({ projectId, groupId, order }) => {
-          const params = { repo: projectId, groupId };
-          if (order !== undefined) params.order = order;
-          const result = requireRecord(
-            await callRuntimeResult(windowObject, 'projectGroup.moveProject', params),
-            'projectGroup.moveProject result'
-          );
-          if (result.repo !== null && !isRecord(result.repo)) {
-            throw new Error('Orca runtime RPC returned invalid projectGroup.moveProject repo');
-          }
-          return result.repo;
-        }
+        create: async () => rejectLocalMutation('create'),
+        update: async () => rejectLocalMutation('update'),
+        delete: async () => rejectLocalMutation('delete'),
+        moveProject: async () => rejectLocalMutation('moveProject')
       };
       Object.defineProperty(bridge, NAMESPACE_MARKER, { value: true });
   
@@ -1041,17 +1115,17 @@
         patchState.installed = false;
         return { applied: false, reason: 'runtime-environment-unavailable' };
       }
-      if (typeof windowObject.api?.runtime?.call !== 'function') {
+      if (!windowObject.api) {
         patchState.installed = false;
-        return { applied: false, reason: 'runtime-call-api-unavailable' };
+        return { applied: false, reason: 'orca-api-unavailable' };
       }
-      if (windowObject.api?.projectGroups?.[NAMESPACE_MARKER] === true) {
+      if (windowObject.api.projectGroups?.[NAMESPACE_MARKER] === true) {
         patchState.installed = true;
         return { applied: true, reason: 'already-installed' };
       }
   
-      const fallbackNamespace = windowObject.api?.projectGroups;
-      const bridge = createProjectGroupsBridge(windowObject, fallbackNamespace);
+      const fallbackNamespace = windowObject.api.projectGroups;
+      const bridge = createProjectGroupsBridge(fallbackNamespace);
       try {
         windowObject.api.projectGroups = bridge;
       } catch {
@@ -1105,7 +1179,7 @@
       return {
         applied: installed.applied,
         fields: [
-          ...(installed.applied ? ['projectGroups.list/create/update/delete/moveProject'] : []),
+          ...(installed.applied ? ['projectGroups.list(empty-local-catalog)', 'projectGroups.local-mutations(fail-closed)'] : []),
           ...(patchState.watcherInstalled ? ['project-groups-api-rewrap-watcher'] : [])
         ],
         reason: installed.reason
@@ -1114,8 +1188,7 @@
   
     OWP.bridgeWebProjectGroups = Object.freeze({
       readPairedEnvironment,
-      runtimeErrorMessage,
-      callRuntimeResult,
+      rejectLocalMutation,
       createProjectGroupsBridge,
       installProjectGroupsBridge,
       ensureCurrentBridge,
@@ -1778,6 +1851,9 @@
           profile?.platform
         );
       }
+      if (patch.id === 'project-paired-runtime-authority') {
+        return OWP.projectPairedRuntimeAuthority.applyProjectPairedRuntimeAuthority(windowObject);
+      }
       if (patch.id === 'bridge-web-runtime-settings') {
         return OWP.bridgeWebRuntimeSettings.applyBridgeWebRuntimeSettings(windowObject);
       }
@@ -1854,6 +1930,9 @@
       const api = Object.freeze({
         getStatus: () => {
           const snapshot = JSON.parse(JSON.stringify(state));
+          if (OWP.projectPairedRuntimeAuthority?.getStatus) {
+            snapshot.pairedRuntimeAuthority = OWP.projectPairedRuntimeAuthority.getStatus();
+          }
           if (OWP.bridgeWebRuntimeSettings?.getStatus) {
             snapshot.runtimeSettingsBridge = OWP.bridgeWebRuntimeSettings.getStatus();
           }
