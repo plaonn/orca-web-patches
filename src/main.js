@@ -84,6 +84,9 @@
         profile?.platform
       );
     }
+    if (patch.id === 'project-paired-runtime-authority') {
+      return OWP.projectPairedRuntimeAuthority.applyProjectPairedRuntimeAuthority(windowObject);
+    }
     if (patch.id === 'bridge-web-runtime-settings') {
       return OWP.bridgeWebRuntimeSettings.applyBridgeWebRuntimeSettings(windowObject);
     }
@@ -160,6 +163,9 @@
     const api = Object.freeze({
       getStatus: () => {
         const snapshot = JSON.parse(JSON.stringify(state));
+        if (OWP.projectPairedRuntimeAuthority?.getStatus) {
+          snapshot.pairedRuntimeAuthority = OWP.projectPairedRuntimeAuthority.getStatus();
+        }
         if (OWP.bridgeWebRuntimeSettings?.getStatus) {
           snapshot.runtimeSettingsBridge = OWP.bridgeWebRuntimeSettings.getStatus();
         }
