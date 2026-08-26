@@ -87,6 +87,9 @@
     if (patch.id === 'bridge-web-runtime-settings') {
       return OWP.bridgeWebRuntimeSettings.applyBridgeWebRuntimeSettings(windowObject);
     }
+    if (patch.id === 'bridge-web-project-groups') {
+      return OWP.bridgeWebProjectGroups.applyBridgeWebProjectGroups(windowObject);
+    }
     if (patch.id === 'qualify-runtime-worktree-removal-host') {
       return OWP.qualifyRuntimeWorktreeRemovalHost.applyQualifyRuntimeWorktreeRemovalHost(windowObject);
     }
@@ -159,6 +162,9 @@
         const snapshot = JSON.parse(JSON.stringify(state));
         if (OWP.bridgeWebRuntimeSettings?.getStatus) {
           snapshot.runtimeSettingsBridge = OWP.bridgeWebRuntimeSettings.getStatus();
+        }
+        if (OWP.bridgeWebProjectGroups?.getStatus) {
+          snapshot.projectGroupsBridge = OWP.bridgeWebProjectGroups.getStatus();
         }
         if (OWP.qualifyRuntimeWorktreeRemovalHost?.getStatus) {
           snapshot.worktreeRemovalHostQualification = OWP.qualifyRuntimeWorktreeRemovalHost.getStatus();
