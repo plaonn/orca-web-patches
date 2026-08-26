@@ -73,7 +73,7 @@ function executeArtifact({ profile, discovered }) {
   return { window, navigator, localStorage, getReloads: () => reloads };
 }
 
-test('generated artifact patches Edge-like navigator from a verified Linux profile', async () => {
+test('generated artifact patches Edge-like navigator and projects paired runtime authority for Linux', async () => {
   const app = executeArtifact({
     profile: {
       schemaVersion: 1,
@@ -92,6 +92,8 @@ test('generated artifact patches Edge-like navigator from a verified Linux profi
   assert.match(app.navigator.userAgent, /Edg\/151\.0\.0\.0/);
   const status = app.window.__orcaWebPatches.getStatus();
   assert.equal(status.bootstrapPatchApplied, true);
+  assert.deepEqual(status.bootstrapSelectedPatchIds, ['align-browser-platform-to-runtime', 'project-paired-runtime-authority']);
+  assert.equal(status.pairedRuntimeAuthority.installed, true);
   assert.equal('runtimeId' in (status.bootstrapProfile ?? {}), false);
   assert.equal('endpoint' in (status.bootstrapProfile ?? {}), false);
   assert.equal('publicKeyB64' in (status.bootstrapProfile ?? {}), false);
@@ -99,7 +101,7 @@ test('generated artifact patches Edge-like navigator from a verified Linux profi
   assert.equal(app.getReloads(), 0);
 });
 
-test('generated artifact patches Edge-like navigator from a verified macOS profile', async () => {
+test('generated artifact patches Edge-like navigator and projects paired runtime authority for macOS', async () => {
   const app = executeArtifact({
     profile: {
       schemaVersion: 1,
@@ -119,12 +121,13 @@ test('generated artifact patches Edge-like navigator from a verified macOS profi
   assert.match(app.navigator.userAgent, /Edg\/151\.0\.0\.0/);
   const status = app.window.__orcaWebPatches.getStatus();
   assert.equal(status.bootstrapPatchApplied, true);
-  assert.deepEqual(status.bootstrapSelectedPatchIds, ['align-browser-platform-to-runtime']);
+  assert.deepEqual(status.bootstrapSelectedPatchIds, ['align-browser-platform-to-runtime', 'project-paired-runtime-authority']);
   assert.equal(status.bootstrapPatchResults[0].reason, 'aligned');
+  assert.equal(status.pairedRuntimeAuthority.installed, true);
   assert.equal(app.getReloads(), 0);
 });
 
-test('generated artifact remains unpatched on a verified Windows runtime', async () => {
+test('generated artifact leaves Windows browser identity unchanged while projecting paired runtime authority', async () => {
   const app = executeArtifact({
     profile: {
       schemaVersion: 1,
@@ -140,6 +143,9 @@ test('generated artifact remains unpatched on a verified Windows runtime', async
   });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(app.navigator.platform, 'Win32');
-  assert.equal(app.window.__orcaWebPatches.getStatus().bootstrapPatchApplied, false);
+  const status = app.window.__orcaWebPatches.getStatus();
+  assert.equal(status.bootstrapPatchApplied, true);
+  assert.deepEqual(status.bootstrapSelectedPatchIds, ['project-paired-runtime-authority']);
+  assert.equal(status.pairedRuntimeAuthority.installed, true);
   assert.equal(app.getReloads(), 0);
 });
